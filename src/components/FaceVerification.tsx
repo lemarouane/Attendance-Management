@@ -3,9 +3,12 @@ import { useEffect, useRef, useState } from "react";
 interface FaceVerificationProps {
   cinImage: string;
   selfieImage: string;
+  attemptNumber: number;   // passed from parent — which attempt this is
+  maxAttempts: number;     // passed from parent — 5
   onSuccess: () => void;
-  onRetake: () => void;
-  onContinueAnyway?: () => void;
+  onRetake: () => void;    // retake selfie only
+  onRetakeCIN: () => void; // retake CIN + selfie
+  onContinueAnyway?: () => void; // only passed when attemptNumber >= maxAttempts
 }
 
 type VerificationStatus =
@@ -33,13 +36,15 @@ declare global {
 const MODEL_BASE  = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
 const FACEAPI_CDN = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
 const BASE_THRESHOLD = 0.52;
-const MAX_ATTEMPTS   = 5;
 
 export default function FaceVerification({
   cinImage,
   selfieImage,
+  attemptNumber,
+  maxAttempts,
   onSuccess,
   onRetake,
+  onRetakeCIN,
   onContinueAnyway,
 }: FaceVerificationProps) {
   const [status, setStatus] = useState<VerificationStatus>("loading_script");
@@ -52,23 +57,22 @@ export default function FaceVerification({
     { label: "Extraction descripteur Selfie",       done: false, active: false },
     { label: "Comparaison des visages",             done: false, active: false },
   ]);
-  const [similarity, setSimilarity]               = useState<number>(0);
-  const [distance, setDistance]                   = useState<number>(0);
-  const [usedThreshold, setUsedThreshold]         = useState<number>(BASE_THRESHOLD);
-  const [cinConfidence, setCinConfidence]         = useState<number>(0);
-  const [selfieConfidence, setSelfieConfidence]   = useState<number>(0);
-  const [errorMsg, setErrorMsg]                   = useState("");
+  const [similarity, setSimilarity]             = useState<number>(0);
+  const [distance, setDistance]                 = useState<number>(0);
+  const [usedThreshold, setUsedThreshold]       = useState<number>(BASE_THRESHOLD);
+  const [cinConfidence, setCinConfidence]       = useState<number>(0);
+  const [selfieConfidence, setSelfieConfidence] = useState<number>(0);
+  const [errorMsg, setErrorMsg]                 = useState("");
   const [cinPreviewLandmarks, setCinPreviewLandmarks]       = useState<string | null>(null);
   const [selfiePreviewLandmarks, setSelfiePreviewLandmarks] = useState<string | null>(null);
-
-  // Persists across retries — only resets when component unmounts (new selfie)
-  const [failCount, setFailCount] = useState(0);
 
   const cinCanvasRef    = useRef<HTMLCanvasElement>(null);
   const selfieCanvasRef = useRef<HTMLCanvasElement>(null);
   const ranRef          = useRef(false);
 
-  // ─────────────────────────────────────────────────────────────────────────
+  const attemptsLeft   = Math.max(0, maxAttempts - attemptNumber);
+  const showEscapeHatch = !!onContinueAnyway; // parent only passes it when limit reached
+
   function markStep(index: number, done = true) {
     setSteps((prev) =>
       prev.map((s, i) => ({
@@ -235,7 +239,6 @@ export default function FaceVerification({
       const cinDetection = await detectWithFallback(cinCanvas);
 
       if (!cinDetection) {
-        setFailCount((c) => c + 1); // error counts as an attempt too
         setStatus("error");
         setErrorMsg(
           "Aucun visage détecté sur la photo de la CIN. " +
@@ -254,7 +257,6 @@ export default function FaceVerification({
       const selfieDetection = await detectWithFallback(selfieCanvas);
 
       if (!selfieDetection) {
-        setFailCount((c) => c + 1); // error counts as an attempt too
         setStatus("error");
         setErrorMsg(
           "Aucun visage détecté sur le selfie. " +
@@ -279,39 +281,13 @@ export default function FaceVerification({
       setUsedThreshold(threshold);
       markStep(6);
 
-      if (dist < threshold) {
-        setStatus("success");
-      } else {
-        setFailCount((c) => c + 1); // ← increment on every failed comparison
-        setStatus("failed");
-      }
+      setStatus(dist < threshold ? "success" : "failed");
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setFailCount((c) => c + 1);
       setStatus("error");
       setErrorMsg(msg);
     }
-  }
-
-  function resetAndRetry() {
-    // NOTE: failCount is intentionally NOT reset here — it persists across retries
-    ranRef.current = false;
-    setStatus("loading_script");
-    setCinPreviewLandmarks(null);
-    setSelfiePreviewLandmarks(null);
-    setCinConfidence(0);
-    setSelfieConfidence(0);
-    setSteps([
-      { label: "Chargement du moteur face-api.js",    done: false, active: true  },
-      { label: "Modèle de détection (SSD MobileNet)", done: false, active: false },
-      { label: "Modèle de landmarks (68 points)",     done: false, active: false },
-      { label: "Modèle de reconnaissance faciale",    done: false, active: false },
-      { label: "Extraction descripteur CIN",          done: false, active: false },
-      { label: "Extraction descripteur Selfie",       done: false, active: false },
-      { label: "Comparaison des visages",             done: false, active: false },
-    ]);
-    setTimeout(() => runVerification(), 100);
   }
 
   useEffect(() => {
@@ -319,11 +295,8 @@ export default function FaceVerification({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isLoading        = ["loading_script", "loading_models", "extracting", "comparing"].includes(status);
-  const attemptsLeft     = Math.max(0, MAX_ATTEMPTS - failCount);
-  const showEscapeHatch  = onContinueAnyway && failCount >= MAX_ATTEMPTS;
+  const isLoading = ["loading_script", "loading_models", "extracting", "comparing"].includes(status);
 
-  // ─────────────────────────────────────────────────────────────────────────
   function StepList() {
     return (
       <div className="space-y-2 w-full">
@@ -396,35 +369,19 @@ export default function FaceVerification({
     );
   }
 
-  // Attempt counter dots shown below retry buttons
+  // Dots showing how many full capture cycles they've used
   function AttemptTracker() {
-    if (!onContinueAnyway || failCount === 0) return null;
+    if (attemptNumber === 0) return null;
     return (
       <div className="flex flex-col items-center gap-2 py-1">
         <div className="flex items-center gap-1.5">
-          {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
-            <div
-              key={i}
-              className={`w-2.5 h-2.5 rounded-full transition-all ${
-                i < failCount ? "bg-red-400" : "bg-gray-200"
-              }`}
-            />
-          ))}
+ 
         </div>
-        {attemptsLeft > 0 ? (
-          <p className="text-xs text-gray-400 text-center">
-            {attemptsLeft} tentative{attemptsLeft > 1 ? "s" : ""} restante{attemptsLeft > 1 ? "s" : ""} avant l'option de continuer sans vérification
-          </p>
-        ) : (
-          <p className="text-xs text-amber-500 font-medium text-center">
-            Nombre maximum de tentatives atteint
-          </p>
-        )}
+ 
       </div>
     );
   }
 
-  // Escape hatch box — shown only after MAX_ATTEMPTS failures
   function EscapeHatch({ context }: { context: "failed" | "error" }) {
     if (!showEscapeHatch) return null;
     return (
@@ -434,10 +391,7 @@ export default function FaceVerification({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-amber-700 text-xs leading-relaxed">
-            {context === "failed"
-              ? `Après ${failCount} tentatives infructueuses, vous pouvez soumettre votre dossier pour une vérification manuelle.`
-              : `La détection a échoué ${failCount} fois. Vous pouvez soumettre votre dossier pour une vérification manuelle.`
-            }
+
             {" "}<strong>Un administrateur examinera vos photos</strong> avant d'activer votre compte.
           </p>
         </div>
@@ -445,18 +399,16 @@ export default function FaceVerification({
           onClick={onContinueAnyway}
           className="w-full bg-amber-100 hover:bg-amber-200 text-amber-800 font-semibold py-2.5 rounded-xl transition-all text-sm border border-amber-300"
         >
-          Continuer quand même →
-          <span className="text-xs font-normal text-amber-600 ml-1">(validation admin requise)</span>
+          Continuer
         </button>
       </div>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
 
-      {/* Title */}
+      {/* Title + attempt badge */}
       <div className="text-center">
         <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 mb-3">
           <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -468,12 +420,11 @@ export default function FaceVerification({
         <p className="text-gray-500 text-sm mt-1">
           Comparaison de votre visage avec la photo sur votre CIN
         </p>
+ 
       </div>
 
-      {/* Loading progress */}
       {isLoading && <StepList />}
 
-      {/* Image previews with landmarks */}
       {(cinPreviewLandmarks || selfiePreviewLandmarks) && (
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col items-center gap-2">
@@ -505,7 +456,6 @@ export default function FaceVerification({
         </div>
       )}
 
-      {/* Low confidence warning */}
       {(cinConfidence > 0 || selfieConfidence > 0) &&
        (cinConfidence < 60 || selfieConfidence < 60) &&
        (status === "success" || status === "failed") && (
@@ -584,21 +534,22 @@ export default function FaceVerification({
             </ul>
           </div>
 
-          {/* Retry buttons + attempt tracker */}
           <div className="space-y-3">
+            {/* Two retake options — selfie only, or full redo */}
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={onRetake}
-                className="bg-red-500 hover:bg-red-600 text-white font-semibold py-3 rounded-xl transition-all text-sm"
+                disabled={attemptsLeft === 0}
+                className="bg-red-500 hover:bg-red-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all text-sm"
               >
-                ↩ Reprendre selfie
+                ↩ Nouveau selfie
               </button>
               <button
-                onClick={resetAndRetry}
-                disabled={failCount >= MAX_ATTEMPTS}
-                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all text-sm"
+                onClick={onRetakeCIN}
+                disabled={attemptsLeft === 0}
+                className="bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all text-sm"
               >
-                ↺ Réessayer
+                ↩ Reprendre CIN
               </button>
             </div>
             <AttemptTracker />
@@ -635,21 +586,21 @@ export default function FaceVerification({
             </ul>
           </div>
 
-          {/* Retry buttons + attempt tracker */}
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={onRetake}
-                className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 rounded-xl transition-all text-sm"
+                disabled={attemptsLeft === 0}
+                className="bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 font-semibold py-3 rounded-xl transition-all text-sm"
               >
-                ↩ Reprendre selfie
+                ↩ Nouveau selfie
               </button>
               <button
-                onClick={resetAndRetry}
-                disabled={failCount >= MAX_ATTEMPTS}
-                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all text-sm"
+                onClick={onRetakeCIN}
+                disabled={attemptsLeft === 0}
+                className="bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all text-sm"
               >
-                ↺ Réessayer
+                ↩ Reprendre CIN
               </button>
             </div>
             <AttemptTracker />

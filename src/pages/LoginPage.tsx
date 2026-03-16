@@ -37,9 +37,9 @@ export default function LoginPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Login failed.";
       if (msg.includes("DEVICE_LOCKED")) {
-        toast.error("Your account is locked to another device. Contact administrator.", { duration: 6000 });
+        toast.error("Votre compte est verrouillé sur un autre appareil. Contactez l'administrateur.", { duration: 6000 });
       } else if (msg.includes("PENDING")) {
-        toast.error("Your account is pending admin validation. Please wait.", { duration: 6000 });
+        toast.error("Votre compte est en attente de validation par l'administrateur.", { duration: 6000 });
       } else if (msg.includes("invalid-credential") || msg.includes("wrong-password") || msg.includes("user-not-found")) {
         toast.error("Invalid apogee code or password.");
       } else {
@@ -101,9 +101,7 @@ export default function LoginPage() {
                   className="w-full border border-gray-200 rounded-xl pl-10 pr-4 py-3 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all font-mono text-center tracking-widest text-lg bg-gray-50 focus:bg-white"
                 />
               </div>
-              <p className="text-xs text-gray-400 mt-1.5 text-center">
-                Votre numéro d'étudiant ENSAT
-              </p>
+ 
             </div>
 
             {/* Password */}
@@ -176,7 +174,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-gray-400 text-xs mt-6">
-          ENSAT-CHECKING © 2025 — Université Abdelmalek Essaâdi — Tanger
+          &copy; {new Date().getFullYear()} ENSAT-CHECKING. Tous droits réservés.
         </p>
       </div>
     </div>

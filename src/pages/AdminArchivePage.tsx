@@ -88,7 +88,7 @@ export default function AdminArchivePage() {
         "#":              i + 1,
         "Nom complet":    r.student_name || "—",
         "Code Apogée":   r.apogee_code || "—",
-        "Programme":      r.cod_etp || r.filiere || "—",
+        "Filière":      r.cod_etp || r.filiere || "—",
         "Salle":          r.salle_name || "—",
         "Date":           r.date_label || "—",
         "Heure de scan":  formatTimestamp(r.scan_time),
@@ -170,7 +170,7 @@ export default function AdminArchivePage() {
           "#":            i + 1,
           "Nom":          s.name,
           "Code Apogée": s.apogee,
-          "Programme":   s.prog,
+          "Filière":   s.prog,
           "Nb jours présent": s.sessions.length,
           "Jours":        s.sessions.sort().join(", "),
           "Salles":       s.salles.join(", "),
@@ -308,7 +308,7 @@ export default function AdminArchivePage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher par nom, apogée, programme, salle, date…"
+              placeholder="Rechercher par nom, apogée, filière, salle, date…"
               className="input-light pl-10"
             />
             {search && (
@@ -368,7 +368,7 @@ export default function AdminArchivePage() {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-slate-100 bg-slate-50">
-                          {["#", "Photo", "Étudiant", "Apogée", "Programme", "Salle", "Heure scan", "Détail"].map((h) => (
+                          {["#", "Photo", "Étudiant", "Apogée", "Filière", "Salle", "Heure scan", "Détail"].map((h) => (
                             <th key={h} className="text-left text-xs text-slate-500 font-semibold px-4 py-3">{h}</th>
                           ))}
                         </tr>
@@ -441,7 +441,7 @@ export default function AdminArchivePage() {
                                       {[
                                         { label: "ID Étudiant",    value: rec.student_id },
                                         { label: "Code Apogée",    value: rec.apogee_code },
-                                        { label: "Programme",      value: rec.cod_etp || rec.filiere },
+                                        { label: "Filière",      value: rec.cod_etp || rec.filiere },
                                         { label: "Salle",          value: rec.salle_name },
                                         { label: "Session",        value: (rec.session_id || "").slice(0, 20) + "…" },
                                         { label: "Heure d'archive", value: formatTimestamp(rec.archived_at) },

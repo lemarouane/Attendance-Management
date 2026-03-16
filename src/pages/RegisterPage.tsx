@@ -16,7 +16,6 @@ import CameraCapture from "../components/CameraCapture";
 import FaceDetectionCamera from "../components/FaceDetectionCamera";
 import FaceVerification from "../components/FaceVerification";
 
-// Steps: 1=Apogee, 2=CIN, 3=Selfie, 3.5=FaceVerif, 4=Password, 5=Confirm
 type Step = 1 | 2 | 3 | 3.5 | 4 | 5;
 
 export default function RegisterPage() {
@@ -52,6 +51,11 @@ export default function RegisterPage() {
   // Face verification result
   const [faceVerified, setFaceVerified] = useState(false);
 
+  // Global attempt counter — increments every time the full capture+verify
+  // cycle runs (i.e. every time they arrive at step 3.5 with new images).
+  // Lives here so it survives selfie retakes and CIN retakes.
+  const [verificationAttempts, setVerificationAttempts] = useState(0);
+
   useEffect(() => { checkStatus(); }, []);
 
   async function checkStatus() {
@@ -78,11 +82,9 @@ export default function RegisterPage() {
     setRetrying(false);
   }
 
-  // Step 1: Validate apogee
   async function handleValidateApogee(e: FormEvent) {
     e.preventDefault();
     if (!apogeeCode.trim()) { toast.error("Veuillez saisir votre code apogée."); return; }
-
     if (!serverHealth?.online) {
       toast.error("Serveur backend hors ligne. Exécutez : cd server && node index.js");
       return;
@@ -120,6 +122,8 @@ export default function RegisterPage() {
 
   function handleSelfieNext() {
     if (!selfieImage) { toast.error("Veuillez capturer votre selfie."); return; }
+    // ← increment attempt count every time they submit new images for verification
+    setVerificationAttempts((c) => c + 1);
     setStep(3.5);
   }
 
@@ -129,9 +133,18 @@ export default function RegisterPage() {
   }
 
   function handleFaceVerifRetake() {
+    // Go back to selfie — attempt count already incremented when they entered 3.5
     setFaceVerified(false);
     setSelfieImage(null);
     setStep(3);
+  }
+
+  function handleFaceVerifRetakeCIN() {
+    // Go all the way back to CIN — full redo
+    setFaceVerified(false);
+    setSelfieImage(null);
+    setCinImage(null);
+    setStep(2);
   }
 
   function handlePasswordNext(e: FormEvent) {
@@ -152,7 +165,6 @@ export default function RegisterPage() {
     let selfiePath = "";
 
     try {
-      // Upload CIN
       setLoadingMsg("Envoi de la photo CIN au serveur…");
       const cinResult = await uploadBase64Image(apogeeCode, "cin", cinImage);
       if (!cinResult.success) {
@@ -163,7 +175,6 @@ export default function RegisterPage() {
       cinPath = cinResult.path;
       toast.success("Photo CIN enregistrée ✓");
 
-      // Upload Selfie
       setLoadingMsg("Envoi du selfie au serveur…");
       const selfieResult = await uploadBase64Image(apogeeCode, "selfie", selfieImage);
       if (!selfieResult.success) {
@@ -174,10 +185,8 @@ export default function RegisterPage() {
       selfiePath = selfieResult.path;
       toast.success("Selfie enregistré ✓");
 
-      // Create Firebase account
       setLoadingMsg("Création du compte Firebase…");
       const email = `${apogeeCode.toLowerCase()}@uae.ac.ma`;
-
       const registrationStatus = faceVerified ? "validated" : "pending";
 
       await registerStudent({
@@ -215,7 +224,6 @@ export default function RegisterPage() {
     }
   }
 
-  // Step indicator
   const stepIndicators = [
     { num: 1,   label: "Apogée" },
     { num: 2,   label: "CIN" },
@@ -237,27 +245,18 @@ export default function RegisterPage() {
         </div>
       );
     }
-
     if (!serverHealth?.online) {
       return (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-red-500" />
-            <span className="text-red-600 text-sm font-semibold">Serveur backend hors ligne</span>
+            <span className="text-red-600 text-sm font-semibold">Not connected</span>
           </div>
-          <p className="text-gray-500 text-xs leading-relaxed">
-            Lancez le serveur Express pour valider les codes apogée et sauvegarder les photos.
-          </p>
-          <div className="bg-gray-100 rounded-lg px-3 py-2 font-mono text-xs text-amber-700">
-            cd server && node index.js
-          </div>
-          <button onClick={checkStatus} className="text-xs text-emerald-600 hover:text-emerald-700 underline">
-            Vérifier à nouveau ↺
-          </button>
+
+
         </div>
       );
     }
-
     if (dbStatus && !dbStatus.connected) {
       const apoErr = dbStatus.apo?.error;
       const pgiErr = dbStatus.pgi?.error;
@@ -284,7 +283,6 @@ export default function RegisterPage() {
         </div>
       );
     }
-
     return (
       <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600">
         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -438,6 +436,14 @@ export default function RegisterPage() {
                 <p className="text-gray-500 text-sm">Le système détectera votre visage avant de capturer</p>
               </div>
 
+              {/* Show attempt count if they've already tried */}
+              {verificationAttempts > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
+                  <span className="text-amber-500 text-sm">⚠️</span>
+ 
+                </div>
+              )}
+
               <FaceDetectionCamera
                 onCapture={setSelfieImage}
                 onRetake={() => setSelfieImage(null)}
@@ -462,19 +468,23 @@ export default function RegisterPage() {
             </div>
           )}
 
-{/* STEP 3.5 — Face Verification */}
-{step === 3.5 && cinImage && selfieImage && (
-  <FaceVerification
-    cinImage={cinImage}
-    selfieImage={selfieImage}
-    onSuccess={handleFaceVerifSuccess}
-    onRetake={handleFaceVerifRetake}
-    onContinueAnyway={() => {
-      setFaceVerified(false);
-      setStep(4);
-    }}
-  />
-)}
+          {/* STEP 3.5 — Face Verification */}
+          {step === 3.5 && cinImage && selfieImage && (
+            <FaceVerification
+              cinImage={cinImage}
+              selfieImage={selfieImage}
+              attemptNumber={verificationAttempts}
+              maxAttempts={5}
+              onSuccess={handleFaceVerifSuccess}
+              onRetake={handleFaceVerifRetake}
+              onRetakeCIN={handleFaceVerifRetakeCIN}
+              onContinueAnyway={
+                verificationAttempts >= 5
+                  ? () => { setFaceVerified(false); setStep(4); }
+                  : undefined
+              }
+            />
+          )}
 
           {/* STEP 4 — Password */}
           {step === 4 && (
@@ -489,7 +499,6 @@ export default function RegisterPage() {
                 </p>
               </div>
 
-              {/* Dynamic badge based on face verification result */}
               {faceVerified ? (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2">
                   <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -562,7 +571,6 @@ export default function RegisterPage() {
               </div>
 
               <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-4">
-                {/* Photo previews */}
                 <div className="flex gap-4 justify-center">
                   {cinImage && (
                     <div className="flex flex-col items-center gap-1">
@@ -585,10 +593,12 @@ export default function RegisterPage() {
                       { label: "Code Apogée",   value: apogeeCode },
                       { label: "CIN",           value: apogeeInfo.CIN_IND },
                       { label: "Filière",       value: apogeeInfo.COD_ETP || "N/A" },
-                      { label: "Identifiant",   value: `${apogeeCode.toLowerCase()}@uae.ac.ma` },
+                      { label: "Identifiant",   value: `${apogeeCode.toLowerCase()}` },
                       {
                         label: "Vérif. visage",
-                        value: faceVerified ? "✓ Correspondance confirmée — activation auto" : "⚠ Non concluant — validation admin requise",
+                        value: faceVerified
+                          ? "✓ Correspondance confirmée — activation auto"
+                          : "⚠ Non concluant — validation admin requise",
                       },
                     ].map(({ label, value }) => (
                       <div key={label} className="flex justify-between items-center gap-4">
@@ -604,7 +614,6 @@ export default function RegisterPage() {
                 )}
               </div>
 
-              {/* Status info box */}
               {faceVerified ? (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-2">
                   <svg className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

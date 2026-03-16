@@ -152,7 +152,7 @@ export default function AdminStudentsPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher par nom, apogée, CIN, programme…"
+              placeholder="Rechercher par nom, apogée, CIN, Filière…"
               className="input-light pl-10"
             />
             {search && (
@@ -307,8 +307,7 @@ export default function AdminStudentsPage() {
                     <ImageZoomModal
                       src={buildImageUrl(selected.selfie_path)}
                       alt="Selfie"
-                      label="Selfie"
-                      className="flex flex-col items-center"
+                       className="flex flex-col items-center"
                     >
                       <div className="flex flex-col items-center">
                         <img
@@ -325,8 +324,7 @@ export default function AdminStudentsPage() {
                     <ImageZoomModal
                       src={buildImageUrl(selected.cin_path)}
                       alt="CIN"
-                      label="Carte Nationale (CIN)"
-                      className="flex flex-col items-center"
+                       className="flex flex-col items-center"
                     >
                       <div className="flex flex-col items-center">
                         <img
@@ -356,8 +354,8 @@ export default function AdminStudentsPage() {
                     { label: "Code Apogée",    value: selected.apogee_code },
                     { label: "CIN",            value: selected.cin },
                     { label: "COD_IND",        value: selected.cod_ind || "—" },
-                    { label: "Programme",      value: selected.cod_etp || selected.filiere || "—" },
-                    { label: "Email",          value: selected.email },
+                    { label: "Filière",      value: selected.cod_etp || selected.filiere || "—" },
+                    { label: "Email",          value: selected.email.replace('@uae.ac.ma', '') },  
                     { label: "Appareil",       value: selected.deviceFingerprint ? "🔒 Verrouillé" : "🔓 Libre" },
                   ].map(({ label, value }) => (
                     <div key={label} className="flex justify-between items-center py-2 border-b border-slate-100 last:border-0">

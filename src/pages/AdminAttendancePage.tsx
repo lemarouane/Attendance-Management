@@ -107,7 +107,7 @@ export default function AdminAttendancePage() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Rechercher par nom, apogée, programme…"
+                placeholder="Rechercher par nom, apogée, Filière…"
                 className="input-light pl-10"
               />
               {search && (
@@ -138,7 +138,7 @@ export default function AdminAttendancePage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50">
-                    {["#", "Photo", "Nom", "Apogée", "Programme", "Salle", "Heure", "Statut"].map((h) => (
+                    {["#", "Photo", "Nom", "Apogée", "Filière", "Salle", "Heure", "Statut"].map((h) => (
                       <th key={h} className="text-left text-xs text-slate-500 font-semibold px-5 py-3">{h}</th>
                     ))}
                   </tr>
