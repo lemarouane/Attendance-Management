@@ -83,7 +83,7 @@ export async function registerStudent(data: {
   cin_path: string;
   selfie_path: string;
   photo_url: string;
-  status?: "pending" | "validated";   // ← ADD THIS
+  status?: "pending" | "validated";   
 }): Promise<void> {
   // Email is auto-generated from apogee — validate domain
   if (!data.email.endsWith("@uae.ac.ma")) {
@@ -113,7 +113,7 @@ export async function registerStudent(data: {
       cin: data.cin,
       cod_ind: data.cod_ind,
       cod_etp: data.cod_etp,
-      niveau: "",       // filled from COD_ETP or editable later
+      niveau: "",        
       filiere: data.cod_etp || "",
       photo_url: data.photo_url,
       cin_path: data.cin_path,
@@ -126,7 +126,7 @@ export async function registerStudent(data: {
       created_at: serverTimestamp(),
     });
 
-    // Role record
+    
     await setDoc(doc(db, "users", uid), {
       uid,
       role: "student",

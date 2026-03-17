@@ -65,6 +65,9 @@ async function fetchWithTimeout(
   }
 }
 
+
+
+
 // ─── Check backend health ──────────────────────────────────────────────────────
 export async function checkServerHealth(): Promise<ServerHealth> {
   try {
@@ -198,6 +201,173 @@ export async function getMySQLSalles(): Promise<MySQLSalle[]> {
   }
 }
 
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROFESSOR / EDT API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface EdtProf {
+  codeProf: number;
+  nom: string;
+  prenom: string;
+  identifiant: string;
+  email: string;
+  specialite: number;
+}
+
+export interface EdtSalle {
+  codeSalle: number;
+  nom: string;
+  alias: string;
+}
+
+export interface EdtGroupe {
+  codeGroupe: number;
+  nom: string;
+  alias: string;
+}
+
+export interface EdtSession {
+  codeSeance: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+  duration: string;
+  durationMinutes: number;
+  matiere: string;
+  matiereAlias: string;
+  enseignement: string;
+  enseignementAlias: string;
+  displayName: string;
+  typeActivite: string;
+  codeTypeActivite: number;
+  commentaire: string;
+  couleur: number;
+  salles: EdtSalle[];
+  groupes: EdtGroupe[];
+}
+
+export interface EdtMatiere {
+  codeMatiere: number;
+  nom: string;
+  alias: string;
+  couleur: number;
+}
+
+export interface ProfLoginResult {
+  success: boolean;
+  prof?: EdtProf;
+  message?: string;
+}
+
+export interface TimetableResult {
+  success: boolean;
+  week: number;
+  year: number;
+  monday: string;
+  saturday: string;
+  sessions: EdtSession[];
+  message?: string;
+}
+
+// ─── Prof login (verify PPR in EDT database) ─────────────────────────────────
+export async function profLogin(
+  identifiant: string,
+  password: string
+): Promise<ProfLoginResult> {
+  try {
+    const resp = await fetchWithTimeout(
+      `${API_BASE}/prof/login`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiant: identifiant.trim(), password }),
+      },
+      8000
+    );
+
+    const data = (await resp.json()) as ProfLoginResult;
+
+    if (!resp.ok) {
+      return { success: false, message: data.message || "Login failed." };
+    }
+
+    return data;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return {
+      success: false,
+      message: msg.includes("abort")
+        ? "Request timed out."
+        : "Cannot reach backend server.",
+    };
+  }
+}
+
+// ─── Get prof timetable for a specific week ───────────────────────────────────
+export async function getProfTimetable(
+  codeProf: number,
+  week: number,
+  year: number
+): Promise<TimetableResult> {
+  try {
+    const resp = await fetchWithTimeout(
+      `${API_BASE}/prof/${codeProf}/timetable?week=${week}&year=${year}`,
+      {},
+      10000
+    );
+
+    const data = (await resp.json()) as TimetableResult;
+
+    if (!resp.ok) {
+      return {
+        success: false,
+        week,
+        year,
+        monday: "",
+        saturday: "",
+        sessions: [],
+        message: data.message || "Failed to load timetable.",
+      };
+    }
+
+    return data;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return {
+      success: false,
+      week,
+      year,
+      monday: "",
+      saturday: "",
+      sessions: [],
+      message: msg.includes("abort")
+        ? "Request timed out."
+        : "Cannot reach backend server.",
+    };
+  }
+}
+
+// ─── Get prof matieres ────────────────────────────────────────────────────────
+export async function getProfMatieres(
+  codeProf: number
+): Promise<EdtMatiere[]> {
+  try {
+    const resp = await fetchWithTimeout(
+      `${API_BASE}/prof/${codeProf}/matieres`,
+      {},
+      6000
+    );
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { success: boolean; matieres: EdtMatiere[] };
+    return data.matieres || [];
+  } catch {
+    return [];
+  }
+}
+
 // ─── Check if student images exist on server ──────────────────────────────────
 export async function checkStudentImages(
   apogee: string
@@ -213,4 +383,22 @@ export async function checkStudentImages(
   } catch {
     return { cin: { exists: false, url: "" }, selfie: { exists: false, url: "" } };
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
 }

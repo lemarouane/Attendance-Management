@@ -4,6 +4,7 @@ import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
 import AdminLoginPage from "./pages/AdminLoginPage";
+import ProfLoginPage from "./pages/ProfLoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import AdminScanPage from "./pages/AdminScanPage";
@@ -11,6 +12,8 @@ import AdminAttendancePage from "./pages/AdminAttendancePage";
 import AdminStudentsPage from "./pages/AdminStudentsPage";
 import AdminArchivePage from "./pages/AdminArchivePage";
 import AdminPendingPage from "./pages/AdminPendingPage";
+import ProfTimetablePage from "./pages/ProfTimetablePage";
+import ProfScanPage from "./pages/ProfScanPage";
 
 export default function App() {
   return (
@@ -35,55 +38,20 @@ export default function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin-login" element={<AdminLoginPage />} />
+          <Route path="/prof-login" element={<ProfLoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute requiredRole="student">
-                <DashboardPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin-scan"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminScanPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/attendance"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminAttendancePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/students"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminStudentsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/archive"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminArchivePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/students/pending"
-            element={
-              <ProtectedRoute requiredRole="admin">
-                <AdminPendingPage />
-              </ProtectedRoute>
-            }
-          />
+
+          <Route path="/dashboard" element={<ProtectedRoute requiredRole="student"><DashboardPage /></ProtectedRoute>} />
+
+          <Route path="/admin-scan" element={<ProtectedRoute requiredRole="admin"><AdminScanPage /></ProtectedRoute>} />
+          <Route path="/admin/attendance" element={<ProtectedRoute requiredRole="admin"><AdminAttendancePage /></ProtectedRoute>} />
+          <Route path="/admin/students" element={<ProtectedRoute requiredRole="admin"><AdminStudentsPage /></ProtectedRoute>} />
+          <Route path="/admin/archive" element={<ProtectedRoute requiredRole="admin"><AdminArchivePage /></ProtectedRoute>} />
+          <Route path="/admin/students/pending" element={<ProtectedRoute requiredRole="admin"><AdminPendingPage /></ProtectedRoute>} />
+
+          <Route path="/prof/timetable" element={<ProtectedRoute requiredRole="prof"><ProfTimetablePage /></ProtectedRoute>} />
+          <Route path="/prof/scan" element={<ProtectedRoute requiredRole="prof"><ProfScanPage /></ProtectedRoute>} />
+
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>

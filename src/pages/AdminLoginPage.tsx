@@ -161,11 +161,17 @@ export default function AdminLoginPage() {
                 Student login →
               </Link>
             </p>
+            <p className="text-center text-gray-400 text-xs mt-2">
+              Professor?{" "}
+              <Link to="/prof-login" className="text-indigo-500 hover:text-indigo-600 transition-colors">
+                 Professor login →
+              </Link>
+              </p>
           </div>
         </div>
 
         <p className="text-center text-gray-400 text-xs mt-6">
-          ENSAT-CHECKING © 2025 — Université Abdelmalek Essaâdi
+          ENSAT-CHECKING © 2025
         </p>
       </div>
     </div>

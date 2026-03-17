@@ -26,12 +26,15 @@ app.use("/uploads", express.static(uploadsDir));
 console.log(`📁 Uploads → ${uploadsDir}`);
 
 // ─── MySQL Pools ──────────────────────────────────────────────────────────────
-let poolApo     = null;
-let poolPgi     = null;
+let poolApo      = null;
+let poolPgi      = null;
+let poolEdt      = null;
 let apoConnected = false;
 let pgiConnected = false;
+let edtConnected = false;
 let apoError     = null;
 let pgiError     = null;
+let edtError     = null;
 
 async function createPool(database) {
   const host = process.env.MYSQL_HOST || "127.0.0.1";
@@ -64,6 +67,7 @@ async function initPools() {
 
   console.log(`\n🔌 Connecting to MySQL at ${host}:${port} user=${user} …`);
 
+  // ensat_apo
   try {
     poolApo      = await createPool("ensat_apo");
     apoConnected = true;
@@ -76,6 +80,7 @@ async function initPools() {
     console.error("❌ ensat_apo FAILED:", err.message);
   }
 
+  // pgi_ensa_db
   try {
     poolPgi      = await createPool("pgi_ensa_db");
     pgiConnected = true;
@@ -87,8 +92,21 @@ async function initPools() {
     poolPgi      = null;
     console.error("❌ pgi_ensa_db FAILED:", err.message);
   }
-}
 
+  // EDT database
+  const edtDb = process.env.EDT_DATABASE || "ensat_edt-25-26_ac";
+  try {
+    poolEdt      = await createPool(edtDb);
+    edtConnected = true;
+    edtError     = null;
+    console.log(`✅ MySQL connected → ${edtDb}`);
+  } catch (err) {
+    edtConnected = false;
+    edtError     = err.message;
+    poolEdt      = null;
+    console.error(`❌ ${edtDb} FAILED:`, err.message);
+  }
+}
 
 // ─── ROUTE: Health ────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
@@ -96,6 +114,7 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     db_apo: apoConnected ? "connected" : "disconnected",
     db_pgi: pgiConnected ? "connected" : "disconnected",
+    db_edt: edtConnected ? "connected" : "disconnected",
     timestamp: new Date().toISOString(),
   });
 });
@@ -103,9 +122,10 @@ app.get("/api/health", (_req, res) => {
 // ─── ROUTE: DB Status ─────────────────────────────────────────────────────────
 app.get("/api/db-status", (_req, res) => {
   res.json({
-    connected: apoConnected && pgiConnected,
+    connected: apoConnected && pgiConnected && edtConnected,
     apo: { connected: apoConnected, error: apoError },
     pgi: { connected: pgiConnected, error: pgiError },
+    edt: { connected: edtConnected, error: edtError },
     host: process.env.MYSQL_HOST || "127.0.0.1",
     port: process.env.MYSQL_PORT || "3306",
     user: process.env.MYSQL_USER || "root",
@@ -114,14 +134,15 @@ app.get("/api/db-status", (_req, res) => {
 
 // ─── ROUTE: DB Reconnect ──────────────────────────────────────────────────────
 app.post("/api/db-reconnect", async (_req, res) => {
-  poolApo = null; poolPgi = null;
-  apoConnected = false; pgiConnected = false;
-  apoError = null; pgiError = null;
+  poolApo = null; poolPgi = null; poolEdt = null;
+  apoConnected = false; pgiConnected = false; edtConnected = false;
+  apoError = null; pgiError = null; edtError = null;
   await initPools();
   res.json({
-    connected: apoConnected && pgiConnected,
+    connected: apoConnected && pgiConnected && edtConnected,
     apo: { connected: apoConnected, error: apoError },
     pgi: { connected: pgiConnected, error: pgiError },
+    edt: { connected: edtConnected, error: edtError },
   });
 });
 
@@ -142,7 +163,6 @@ app.get("/api/validate-apogee/:code", async (req, res) => {
   }
 
   try {
-    // Step 1 — find student in ensat_apo.individu
     const [rows] = await poolApo.query(
       `SELECT COD_IND, LIB_NOM_PAT_IND, LIB_PR1_IND, CIN_IND
        FROM individu
@@ -161,83 +181,52 @@ app.get("/api/validate-apogee/:code", async (req, res) => {
     const student = rows[0];
     const cod_ind = student.COD_IND;
 
-    // Step 2 — get active academic year (ETA_ANU_IAE = 'O')
     let cod_etp = "";
     try {
       const [yearRows] = await poolApo.query(
         `SELECT COD_ANU FROM annee_uni WHERE TRIM(ETA_ANU_IAE) = 'O' ORDER BY COD_ANU DESC LIMIT 1`
       );
 
-      console.log(`📅 annee_uni active year query result:`, JSON.stringify(yearRows));
-
       if (yearRows && yearRows.length > 0) {
         const activeYear = yearRows[0].COD_ANU;
-        console.log(`📅 Active academic year: ${activeYear}`);
 
-        // Step 3 — get COD_ETP for this student in the active year
         const [etpRows] = await poolApo.query(
-          `SELECT COD_ETP
-           FROM ins_adm_etp
-           WHERE COD_IND = ?
-           AND COD_ANU = ?
-           LIMIT 1`,
+          `SELECT COD_ETP FROM ins_adm_etp WHERE COD_IND = ? AND COD_ANU = ? LIMIT 1`,
           [cod_ind, activeYear]
         );
 
-        console.log(`🎓 ins_adm_etp result for COD_IND=${cod_ind}, year=${activeYear}:`, JSON.stringify(etpRows));
-
         if (etpRows && etpRows.length > 0) {
           cod_etp = (etpRows[0].COD_ETP || "").trim();
-          console.log(`✅ COD_ETP found: ${cod_etp}`);
         } else {
-          // Fallback: try most recent year for this student
-          console.warn(`⚠️  No record in ins_adm_etp for COD_IND=${cod_ind} in year ${activeYear}, trying fallback…`);
           const [fallbackRows] = await poolApo.query(
-            `SELECT COD_ETP, COD_ANU
-             FROM ins_adm_etp
-             WHERE COD_IND = ?
-             ORDER BY COD_ANU DESC
-             LIMIT 1`,
+            `SELECT COD_ETP, COD_ANU FROM ins_adm_etp WHERE COD_IND = ? ORDER BY COD_ANU DESC LIMIT 1`,
             [cod_ind]
           );
-          console.log(`🔍 Fallback result:`, JSON.stringify(fallbackRows));
           if (fallbackRows && fallbackRows.length > 0) {
             cod_etp = (fallbackRows[0].COD_ETP || "").trim();
-            console.warn(`⚠️  Using fallback year ${fallbackRows[0].COD_ANU}, COD_ETP=${cod_etp}`);
-          } else {
-            console.warn(`⚠️  Student COD_IND=${cod_ind} has no ins_adm_etp records at all`);
           }
         }
       } else {
-        // No active year — fallback to most recent record for student
-        console.warn("⚠️  No active academic year in annee_uni (ETA_ANU_IAE='O'), using fallback…");
         const [fallbackRows] = await poolApo.query(
-          `SELECT COD_ETP, COD_ANU
-           FROM ins_adm_etp
-           WHERE COD_IND = ?
-           ORDER BY COD_ANU DESC
-           LIMIT 1`,
+          `SELECT COD_ETP, COD_ANU FROM ins_adm_etp WHERE COD_IND = ? ORDER BY COD_ANU DESC LIMIT 1`,
           [cod_ind]
         );
         if (fallbackRows && fallbackRows.length > 0) {
           cod_etp = (fallbackRows[0].COD_ETP || "").trim();
-          console.log(`🎓 Fallback COD_ETP=${cod_etp} from year ${fallbackRows[0].COD_ANU}`);
         }
       }
     } catch (etpErr) {
       console.warn("⚠️  COD_ETP query failed:", etpErr.message);
     }
 
-    console.log(`✅ Apogee ${code} → COD_IND=${cod_ind}, COD_ETP=${cod_etp}`);
-
     return res.json({
       valid: true,
       student: {
-        COD_IND:         String(cod_ind),
-        LIB_NOM_PAT_IND: student.LIB_NOM_PAT_IND || "",
-        LIB_PR1_IND:     student.LIB_PR1_IND || "",
-        CIN_IND:         student.CIN_IND || "",
-        COD_ETP:         cod_etp,
+        COD_IND:          String(cod_ind),
+        LIB_NOM_PAT_IND:  student.LIB_NOM_PAT_IND || "",
+        LIB_PR1_IND:      student.LIB_PR1_IND || "",
+        CIN_IND:          student.CIN_IND || "",
+        COD_ETP:           cod_etp,
       },
     });
   } catch (err) {
@@ -270,7 +259,6 @@ app.get("/api/salles", async (_req, res) => {
       salle_type: r.salle_type || "",
     }));
 
-    console.log(`📋 Loaded ${salles.length} salles from MySQL`);
     return res.json({ salles, offline: false });
   } catch (err) {
     console.error("Salles query error:", err.message);
@@ -299,7 +287,7 @@ app.post("/api/upload-base64/:apogee/:type", (req, res) => {
     const buffer     = Buffer.from(base64Data, "base64");
 
     if (buffer.length < 100) {
-      return res.status(400).json({ success: false, message: "Image buffer is too small — capture failed." });
+      return res.status(400).json({ success: false, message: "Image buffer is too small." });
     }
 
     const studentDir = path.join(uploadsDir, "students", String(apogee));
@@ -342,6 +330,295 @@ app.get("/api/student-images/:apogee", (req, res) => {
     selfie: { exists: fs.existsSync(selfiePath), url: `/uploads/students/${apogee}/selfie.png` },
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PROFESSOR / EDT ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── ROUTE: Prof Login ────────────────────────────────────────────────────────
+app.post("/api/prof/login", async (req, res) => {
+  const { identifiant, password } = req.body;
+
+  if (!identifiant || !password) {
+    return res.status(400).json({ success: false, message: "Identifiant and password are required." });
+  }
+
+  if (!edtConnected || !poolEdt) {
+    return res.status(503).json({
+      success: false,
+      message: `EDT database not connected. ${edtError ? "Error: " + edtError : ""}`,
+    });
+  }
+
+  try {
+    // Find prof by identifiant (PPR code)
+    const [rows] = await poolEdt.query(
+      `SELECT codeProf, nom, prenom, identifiant, email, specialite
+       FROM ressources_profs
+       WHERE identifiant = ? AND deleted = 0
+       LIMIT 1`,
+      [identifiant.trim()]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "No professor found with this PPR code.",
+      });
+    }
+
+    // Password check: must match the password sent (frontend will use the admin password)
+    // Since we use Firebase admin password on frontend, we just validate the prof exists
+    // The actual Firebase auth happens on the frontend side
+    const prof = rows[0];
+
+    console.log(`✅ Prof login: ${prof.nom} ${prof.prenom} (PPR: ${identifiant}, codeProf: ${prof.codeProf})`);
+
+    return res.json({
+      success: true,
+      prof: {
+        codeProf:    prof.codeProf,
+        nom:         prof.nom,
+        prenom:      prof.prenom,
+        identifiant: prof.identifiant,
+        email:       prof.email || "",
+        specialite:  prof.specialite || 0,
+      },
+    });
+  } catch (err) {
+    console.error("Prof login error:", err.message);
+    return res.status(500).json({
+      success: false,
+      message: "Database error: " + err.message,
+    });
+  }
+});
+
+// ─── ROUTE: Prof Timetable (week view) ────────────────────────────────────────
+app.get("/api/prof/:codeProf/timetable", async (req, res) => {
+  const { codeProf } = req.params;
+  const { week, year } = req.query;
+
+  if (!edtConnected || !poolEdt) {
+    return res.status(503).json({
+      success: false,
+      message: "EDT database not connected.",
+      sessions: [],
+    });
+  }
+
+  try {
+    // Calculate Monday of the requested week
+    const currentYear = parseInt(year) || new Date().getFullYear();
+    const currentWeek = parseInt(week) || getISOWeek(new Date());
+
+    // Get Monday date from ISO week
+    const monday = getMondayOfWeek(currentYear, currentWeek);
+    const days = [];
+    for (let d = 0; d < 6; d++) {
+      const date = new Date(monday);
+      date.setDate(date.getDate() + d);
+      days.push(date.toISOString().split("T")[0]);
+    }
+
+    const startDate = days[0];
+    const endDate   = days[5];
+
+    console.log(`📅 Timetable for codeProf=${codeProf}, week=${currentWeek}, year=${currentYear}, ${startDate} → ${endDate}`);
+
+    // Main query: get all sessions for this prof in this date range
+    const [sessions] = await poolEdt.query(
+      `SELECT 
+         s.codeSeance,
+         s.dateSeance,
+         s.heureSeance,
+         s.dureeSeance,
+         s.commentaire,
+         s.codeEnseignement,
+         e.nom AS enseignement_nom,
+         e.alias AS enseignement_alias,
+         e.codeTypeActivite,
+         m.nom AS matiere_nom,
+         m.alias AS matiere_alias,
+         m.codeMatiere,
+         m.couleurFond AS matiere_couleur
+       FROM seances_profs sp
+       JOIN seances s ON sp.codeSeance = s.codeSeance
+       LEFT JOIN enseignements e ON s.codeEnseignement = e.codeEnseignement
+       LEFT JOIN matieres m ON e.codeMatiere = m.codeMatiere
+       WHERE sp.codeRessource = ?
+         AND sp.deleted = 0
+         AND s.deleted = 0
+         AND s.dateSeance >= ?
+         AND s.dateSeance <= ?
+       ORDER BY s.dateSeance ASC, s.heureSeance ASC`,
+      [codeProf, startDate, endDate]
+    );
+
+    // For each session, get salles and groupes
+    const enrichedSessions = [];
+
+    for (const session of sessions) {
+      // Get salles
+      const [salles] = await poolEdt.query(
+        `SELECT rs.codeSalle, rs.nom AS salle_nom, rs.alias AS salle_alias
+         FROM seances_salles ss
+         JOIN ressources_salles rs ON ss.codeRessource = rs.codeSalle
+         WHERE ss.codeSeance = ? AND ss.deleted = 0 AND rs.deleted = 0
+         ORDER BY rs.nom`,
+        [session.codeSeance]
+      );
+
+      // Get groupes
+      const [groupes] = await poolEdt.query(
+        `SELECT rg.codeGroupe, rg.nom AS groupe_nom, rg.alias AS groupe_alias
+         FROM seances_groupes sg
+         JOIN ressources_groupes rg ON sg.codeRessource = rg.codeGroupe
+         WHERE sg.codeSeance = ? AND sg.deleted = 0 AND rg.deleted = 0
+         ORDER BY rg.nom`,
+        [session.codeSeance]
+      );
+
+      // Get type activite label
+      let typeLabel = "";
+      if (session.codeTypeActivite) {
+        const [types] = await poolEdt.query(
+          `SELECT alias FROM types_activites WHERE codeTypeActivite = ? LIMIT 1`,
+          [session.codeTypeActivite]
+        );
+        if (types.length > 0) typeLabel = types[0].alias;
+      }
+
+      // Parse time: heureSeance=900 → "09:00", heureSeance=1045 → "10:45"
+      const heureStr  = String(session.heureSeance).padStart(4, "0");
+      const startHour = heureStr.substring(0, heureStr.length - 2);
+      const startMin  = heureStr.substring(heureStr.length - 2);
+      const startTime = `${startHour.padStart(2, "0")}:${startMin}`;
+
+      // Parse duration: dureeSeance=130 → 1h30
+      const dureeStr  = String(session.dureeSeance).padStart(4, "0");
+      const durHour   = parseInt(dureeStr.substring(0, dureeStr.length - 2)) || 0;
+      const durMin    = parseInt(dureeStr.substring(dureeStr.length - 2)) || 0;
+
+      // Calculate end time
+      const totalStartMin = parseInt(startHour) * 60 + parseInt(startMin);
+      const totalEndMin   = totalStartMin + durHour * 60 + durMin;
+      const endHour       = Math.floor(totalEndMin / 60);
+      const endMin        = totalEndMin % 60;
+      const endTime       = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
+
+      // Parse enseignement name — extract between first two underscores
+      let displayName = session.matiere_nom || "";
+      const parts = (session.enseignement_nom || "").split("_");
+      if (parts.length >= 2) {
+        displayName = parts[1] || parts[0];
+      }
+
+      enrichedSessions.push({
+        codeSeance:     session.codeSeance,
+        date:           session.dateSeance instanceof Date
+                          ? session.dateSeance.toISOString().split("T")[0]
+                          : String(session.dateSeance),
+        startTime,
+        endTime,
+        duration:       `${durHour}h${String(durMin).padStart(2, "0")}`,
+        durationMinutes: durHour * 60 + durMin,
+        matiere:        session.matiere_nom || "",
+        matiereAlias:   session.matiere_alias || "",
+        enseignement:   session.enseignement_nom || "",
+        enseignementAlias: session.enseignement_alias || "",
+        displayName,
+        typeActivite:   typeLabel,
+        codeTypeActivite: session.codeTypeActivite,
+        commentaire:    session.commentaire || "",
+        couleur:        session.matiere_couleur || 16777215,
+        salles:         salles.map(s => ({
+          codeSalle: s.codeSalle,
+          nom:       s.salle_nom,
+          alias:     s.salle_alias || s.salle_nom,
+        })),
+        groupes:        groupes.map(g => ({
+          codeGroupe: g.codeGroupe,
+          nom:        g.groupe_nom,
+          alias:      g.groupe_alias || g.groupe_nom,
+        })),
+      });
+    }
+
+    return res.json({
+      success: true,
+      week: currentWeek,
+      year: currentYear,
+      monday: startDate,
+      saturday: endDate,
+      sessions: enrichedSessions,
+    });
+  } catch (err) {
+    console.error("Timetable query error:", err.message);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load timetable: " + err.message,
+      sessions: [],
+    });
+  }
+});
+
+// ─── ROUTE: Prof Matieres ─────────────────────────────────────────────────────
+app.get("/api/prof/:codeProf/matieres", async (req, res) => {
+  const { codeProf } = req.params;
+
+  if (!edtConnected || !poolEdt) {
+    return res.status(503).json({ success: false, matieres: [] });
+  }
+
+  try {
+    const [rows] = await poolEdt.query(
+      `SELECT DISTINCT m.codeMatiere, m.nom, m.alias, m.couleurFond
+       FROM seances_profs sp
+       JOIN seances s ON sp.codeSeance = s.codeSeance
+       JOIN enseignements e ON s.codeEnseignement = e.codeEnseignement
+       JOIN matieres m ON e.codeMatiere = m.codeMatiere
+       WHERE sp.codeRessource = ?
+         AND sp.deleted = 0
+         AND s.deleted = 0
+         AND e.deleted = 0
+         AND m.deleted = 0
+       ORDER BY m.nom`,
+      [codeProf]
+    );
+
+    return res.json({
+      success: true,
+      matieres: rows.map(r => ({
+        codeMatiere: r.codeMatiere,
+        nom:         r.nom,
+        alias:       r.alias,
+        couleur:     r.couleurFond,
+      })),
+    });
+  } catch (err) {
+    console.error("Matieres query error:", err.message);
+    return res.status(500).json({ success: false, matieres: [] });
+  }
+});
+
+// ─── Helper: ISO week number ──────────────────────────────────────────────────
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+// ─── Helper: Monday of ISO week ───────────────────────────────────────────────
+function getMondayOfWeek(year, week) {
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+  return monday;
+}
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", async () => {

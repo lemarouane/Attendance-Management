@@ -170,6 +170,12 @@ export default function LoginPage() {
                 Connexion admin →
               </Link>
             </p>
+            <p className="text-center text-gray-400 text-xs">
+              Professeur ?{" "}
+              <Link to="/prof-login" className="text-indigo-500 hover:text-indigo-600 transition-colors">
+                Connexion prof →
+              </Link> 
+              </p>
           </div>
         </div>
 

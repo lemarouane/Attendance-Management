@@ -21,11 +21,26 @@ export default function ProtectedRoute({ children, requiredRole }: Props) {
     );
   }
 
-  if (!firebaseUser) return <Navigate to="/login" replace />;
+  if (!firebaseUser) {
+    if (requiredRole === "admin") return <Navigate to="/admin-login" replace />;
+    if (requiredRole === "prof") return <Navigate to="/prof-login" replace />;
+    return <Navigate to="/login" replace />;
+  }
 
   if (requiredRole && role !== requiredRole) {
-    if (role === "admin") return <Navigate to="/admin-scan" replace />;
-    return <Navigate to="/dashboard" replace />;
+    // Special case: prof uses admin Firebase account, so allow "admin" role to access prof routes
+    // if they have a prof session active
+    if (requiredRole === "prof" && role !== "prof") {
+      return <Navigate to="/prof-login" replace />;
+    }
+    if (requiredRole === "admin" && role !== "admin") {
+      return <Navigate to="/admin-login" replace />;
+    }
+    if (requiredRole === "student" && role !== "student") {
+      if (role === "admin") return <Navigate to="/admin-scan" replace />;
+      if (role === "prof") return <Navigate to="/prof/timetable" replace />;
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return <>{children}</>;
