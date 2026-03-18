@@ -28,6 +28,8 @@ export interface AttendanceRecord {
   cod_etp?: string;
   student_name?: string;
   selfie_path?: string;
+  /** Path to the face photo taken at scan time (proves who held the QR code) */
+  scan_face_path?: string;
   // archive-only fields
   archived_at?: unknown;
   date_label?: string;
@@ -90,7 +92,6 @@ async function archiveRecord(data: Record<string, unknown>): Promise<void> {
     await addDoc(collection(db, "attendance_archive"), {
       ...data,
       archived_at: serverTimestamp(),
-      // human-readable date label for grouping in the archive view
       date_label: scanDate.toLocaleDateString("fr-MA", {
         year: "numeric",
         month: "long",
@@ -112,7 +113,6 @@ export async function cleanupOldAttendance(): Promise<number> {
     const data = docSnap.data();
     const ms = tsToMs(data.scan_time);
     if (ms > 0 && ms < twoHoursAgo.getTime()) {
-      // Archive before deleting
       await archiveRecord({ id: docSnap.id, ...data });
       await deleteDoc(doc(db, "attendance", docSnap.id));
       deleted++;
@@ -125,12 +125,15 @@ export async function cleanupOldAttendance(): Promise<number> {
   return deleted;
 }
 
-// ─── Process QR scan and record attendance ─────────────────────────────────────
+// ─── Process QR scan and record attendance ────────────────────────────────────
+// scanFacePath: optional — the path returned after uploading the face photo
+//               taken at scan time.  Pass "" or undefined if not yet uploaded.
 export async function processQRScan(
   rawData: string,
   sessionId: string,
   salleId: string,
-  salleName: string
+  salleName: string,
+  scanFacePath?: string,
 ): Promise<{ success: boolean; student: StudentProfile | null; message: string }> {
 
   // Run cleanup silently in background every scan
@@ -158,8 +161,6 @@ export async function processQRScan(
   }
 
   // ── Duplicate check ────────────────────────────────────────────────────────
-  // Rule: same student + same salle within the last 1 hour → blocked
-  // Same student in a DIFFERENT salle → allowed
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
   const dupQuery = query(
@@ -189,30 +190,47 @@ export async function processQRScan(
 
   // ── Build record ───────────────────────────────────────────────────────────
   const record = {
-    student_id:   payload.uid,
-    scan_time:    serverTimestamp(),
-    session_id:   sessionId,
-    salle_id:     salleId,
-    salle_name:   salleName,
-    student_name: `${student.first_name} ${student.last_name}`,
-    apogee_code:  student.apogee_code  ?? "",
-    filiere:      student.filiere       ?? student.cod_etp ?? "",
-    cod_etp:      student.cod_etp       ?? "",
-    selfie_path:  student.selfie_path   ?? student.photo_url ?? "",
+    student_id:     payload.uid,
+    scan_time:      serverTimestamp(),
+    session_id:     sessionId,
+    salle_id:       salleId,
+    salle_name:     salleName,
+    student_name:   `${student.first_name} ${student.last_name}`,
+    apogee_code:    student.apogee_code  ?? "",
+    filiere:        student.filiere       ?? student.cod_etp ?? "",
+    cod_etp:        student.cod_etp       ?? "",
+    // Profile selfie (stored at registration)
+    selfie_path:    student.selfie_path   ?? student.photo_url ?? "",
+    // Face captured live at scan time — proves who was holding the QR code
+    scan_face_path: scanFacePath ?? "",
   };
 
   // ── Write to live attendance ───────────────────────────────────────────────
   const liveRef = await addDoc(collection(db, "attendance"), record);
 
-  // ── Immediately mirror to archive (archive is permanent) ──────────────────
+  // ── Immediately mirror to archive (permanent) ─────────────────────────────
   await archiveRecord({ ...record, live_id: liveRef.id });
 
   return { success: true, student, message: "Attendance recorded successfully!" };
 }
 
+// ─── Update scan_face_path on an existing attendance record ──────────────────
+// Called after the face photo upload completes (async after QR scan).
+// We update BOTH the live record (by live_id) and the archive copy.
+export async function updateScanFacePath(
+  liveDocId: string,
+  facePath: string
+): Promise<void> {
+  try {
+    const { updateDoc } = await import("firebase/firestore");
+    await updateDoc(doc(db, "attendance", liveDocId), { scan_face_path: facePath });
+  } catch (err) {
+    console.error("Failed to update scan_face_path on live record:", err);
+  }
+}
+
 // ─── Get student attendance (from ARCHIVE — permanent) ────────────────────────
 export async function getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
-  // Try archive first (permanent, never deleted)
   const archiveQ = query(
     collection(db, "attendance_archive"),
     where("student_id", "==", studentId)
@@ -220,7 +238,6 @@ export async function getStudentAttendance(studentId: string): Promise<Attendanc
   const archiveSnap = await getDocs(archiveQ);
   const archiveRecs = archiveSnap.docs.map((d) => ({ id: d.id, ...d.data() } as AttendanceRecord));
 
-  // Also get live records (< 2 hours old) to catch very recent scans
   const liveQ = query(
     collection(db, "attendance"),
     where("student_id", "==", studentId)
@@ -228,7 +245,6 @@ export async function getStudentAttendance(studentId: string): Promise<Attendanc
   const liveSnap = await getDocs(liveQ);
   const liveRecs = liveSnap.docs.map((d) => ({ id: d.id, ...d.data() } as AttendanceRecord));
 
-  // Merge, dedup by session_id + salle_id + approximate time
   const seen = new Set<string>();
   const all: AttendanceRecord[] = [];
 
@@ -244,8 +260,6 @@ export async function getStudentAttendance(studentId: string): Promise<Attendanc
 }
 
 // ─── Get live attendance for a specific session + salle ───────────────────────
-// CRITICAL FIX: filter by BOTH session_id AND salle_id so each admin
-// only sees the students scanned in their specific salle
 export async function getSessionSalleAttendance(
   sessionId: string,
   salleId: string

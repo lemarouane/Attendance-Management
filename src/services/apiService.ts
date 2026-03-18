@@ -7,7 +7,6 @@ const API_BASE = `${window.location.protocol}//${window.location.hostname}:3001/
 export function buildImageUrl(relativePath: string): string {
   if (!relativePath) return "";
   if (relativePath.startsWith("http")) return relativePath;
-  // e.g. /uploads/students/12345/selfie.png → http://192.168.x.x:3001/uploads/...
   return `${window.location.protocol}//${window.location.hostname}:3001${relativePath}`;
 }
 
@@ -64,9 +63,6 @@ async function fetchWithTimeout(
     clearTimeout(timer);
   }
 }
-
-
-
 
 // ─── Check backend health ──────────────────────────────────────────────────────
 export async function checkServerHealth(): Promise<ServerHealth> {
@@ -150,7 +146,7 @@ export async function validateApogee(code: string): Promise<ApogeeValidationResu
   }
 }
 
-// ─── Upload base64 image ──────────────────────────────────────────────────────
+// ─── Upload base64 image (registration: CIN / selfie) ────────────────────────
 export async function uploadBase64Image(
   apogee: string,
   type: "cin" | "selfie",
@@ -168,7 +164,7 @@ export async function uploadBase64Image(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageData }),
       },
-      20000   // 20s timeout for image upload
+      20000
     );
 
     const data = await resp.json() as { success: boolean; path: string; message?: string };
@@ -178,6 +174,46 @@ export async function uploadBase64Image(
     }
 
     console.log(`✅ ${type} uploaded → ${data.path}`);
+    return data;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return {
+      success: false,
+      path: "",
+      message: msg.includes("abort") ? "Upload timed out." : "Cannot reach backend server.",
+    };
+  }
+}
+
+// ─── Upload scan-time face photo ──────────────────────────────────────────────
+// Stores in /uploads/students/{apogee}/scan_faces/{timestamp}.jpg
+// Returns the relative path to store in Firestore (scan_face_path).
+export async function uploadScanFace(
+  apogee: string,
+  imageData: string
+): Promise<{ success: boolean; path: string; message?: string }> {
+  if (!imageData || imageData.length < 100) {
+    return { success: false, path: "", message: "No image data." };
+  }
+
+  try {
+    const resp = await fetchWithTimeout(
+      `${API_BASE}/upload-base64/${encodeURIComponent(apogee)}/scan_face`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageData }),
+      },
+      15000
+    );
+
+    const data = await resp.json() as { success: boolean; path: string; message?: string };
+
+    if (!resp.ok) {
+      return { success: false, path: "", message: data.message || "Upload failed." };
+    }
+
+    console.log(`✅ scan_face uploaded → ${data.path}`);
     return data;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -200,9 +236,6 @@ export async function getMySQLSalles(): Promise<MySQLSalle[]> {
     return [];
   }
 }
-
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  PROFESSOR / EDT API
@@ -383,22 +416,4 @@ export async function checkStudentImages(
   } catch {
     return { cin: { exists: false, url: "" }, selfie: { exists: false, url: "" } };
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
 }

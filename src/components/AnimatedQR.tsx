@@ -49,14 +49,14 @@ export default function AnimatedQR({ uid }: AnimatedQRProps) {
         style={{ boxShadow: "0 0 30px rgba(16,185,129,0.4)" }}
       >
         {qrValue && (
-          <QRCodeSVG
-            value={qrValue}
-            size={220}
-            level="H"
-            includeMargin={false}
-            fgColor="#0f172a"
-            bgColor="#ffffff"
-          />
+<QRCodeSVG
+  value={qrValue}          // keep generating JSON as before
+  size={240}
+  level="L"                // ← only this changes
+  includeMargin={true}
+  fgColor="#000000"
+  bgColor="#ffffff"
+/>
         )}
 
         {/* Corner decorations */}

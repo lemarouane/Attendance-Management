@@ -41,7 +41,7 @@ function formatTimeOnly(ts: unknown): string {
 function getImageUrl(path: string): string {
   if (!path) return "";
   if (path.startsWith("http")) return path;
-  return `${window.location.protocol}//${window.location.hostname}:5173${path}`;
+  return `${window.location.protocol}//${window.location.hostname}:3001${path}`;
 }
 
 type Tab = "qr" | "presences" | "profil";
@@ -141,7 +141,10 @@ export default function DashboardPage() {
               <p className="text-indigo-200 text-sm mt-0.5 truncate">{profile.cod_etp || profile.filiere || "Filière non définie"}</p>
               <p className="text-indigo-300 text-xs mt-1 font-mono">{profile.apogee_code}</p>
             </div>
- 
+            <div className="text-center flex-shrink-0">
+              <div className="text-3xl font-black text-white">{attendance.length}</div>
+              <div className="text-indigo-200 text-xs font-medium leading-tight">séances<br/>présent</div>
+            </div>
           </div>
         </div>
 
