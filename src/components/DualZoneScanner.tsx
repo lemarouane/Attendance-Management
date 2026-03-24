@@ -1,6 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-// jsQR is loaded dynamically via CDN to avoid bundler issues
 declare const jsQR: (
   data: Uint8ClampedArray,
   width: number,
@@ -17,7 +16,6 @@ interface DualZoneScannerProps {
   salleeName?: string;
 }
 
-// ── Skin-tone face detection ───────────────────────────────────────────────────
 function isSkinPixel(r: number, g: number, b: number): boolean {
   return (
     r > 55 && g > 35 && b > 15 &&
@@ -39,7 +37,6 @@ function detectFaceInRegion(
   const pixels = imageData.data;
 
   for (let i = 0; i < SAMPLES; i++) {
-    // Sample inside the region with some randomness for better coverage
     const sx = rx + Math.floor((i % 8) * (rw / 8) + rw / 16);
     const sy = ry + Math.floor(Math.floor(i / 8) * (rh / 10) + rh / 20);
     const idx = (sy * fullW + sx) * 4;
@@ -49,16 +46,13 @@ function detectFaceInRegion(
 
   const skinRatio = skinCount / SAMPLES;
 
-  // Brightness gradient check: top third vs bottom third of face region
   let topSum = 0, topN = 0, botSum = 0, botN = 0;
   const sampleStep = Math.max(1, Math.floor(rw / 20));
   for (let x = rx + Math.floor(rw * 0.2); x < rx + Math.floor(rw * 0.8); x += sampleStep) {
-    // Top strip
     for (let y = ry; y < ry + Math.floor(rh * 0.22); y += sampleStep) {
       const idx = (y * fullW + x) * 4;
       if (idx + 2 < pixels.length) { topSum += (pixels[idx] + pixels[idx+1] + pixels[idx+2]) / 3; topN++; }
     }
-    // Bottom strip
     for (let y = ry + Math.floor(rh * 0.72); y < ry + rh; y += sampleStep) {
       const idx = (y * fullW + x) * 4;
       if (idx + 2 < pixels.length) { botSum += (pixels[idx] + pixels[idx+1] + pixels[idx+2]) / 3; botN++; }
@@ -72,7 +66,6 @@ function detectFaceInRegion(
   return { detected: score > 0.17 && skinRatio > 0.09, score: Math.min(score * 1.6, 1) };
 }
 
-// ── Landmark decorations ───────────────────────────────────────────────────────
 const LANDMARKS = [
   { x: 0.30, y: 0.34 }, { x: 0.38, y: 0.32 },
   { x: 0.62, y: 0.32 }, { x: 0.70, y: 0.34 },
@@ -94,11 +87,11 @@ export default function DualZoneScanner({
   onScanWithFace, onScanNoFace,
   active, onStart, onStop, salleeName,
 }: DualZoneScannerProps) {
-  const videoRef    = useRef<HTMLVideoElement>(null);
-  const canvasRef   = useRef<HTMLCanvasElement>(null); // overlay drawing
-  const workerRef   = useRef<HTMLCanvasElement>(null); // off-screen pixel reads
-  const streamRef   = useRef<MediaStream | null>(null);
-  const loopRef     = useRef<number>(0);              // requestAnimationFrame id
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const workerRef     = useRef<HTMLCanvasElement>(null);
+  const streamRef     = useRef<MediaStream | null>(null);
+  const loopRef       = useRef<number>(0);
   const processingRef = useRef(false);
   const jsQrLoadedRef = useRef(false);
   const containerRef  = useRef<HTMLDivElement>(null);
@@ -107,9 +100,8 @@ export default function DualZoneScanner({
   const [scanning, setScanning]         = useState(false);
   const [cameraError, setCameraError]   = useState("");
   const [faceDetected, setFaceDetected] = useState(false);
-  const [lastQrFlash, setLastQrFlash]   = useState(0); // timestamp of last QR hit
+  const [lastQrFlash, setLastQrFlash]   = useState(0);
 
-  // Load jsQR from CDN once
   useEffect(() => {
     if (typeof jsQR !== "undefined") { jsQrLoadedRef.current = true; return; }
     const script = document.createElement("script");
@@ -118,11 +110,9 @@ export default function DualZoneScanner({
     document.head.appendChild(script);
   }, []);
 
-  // ── Camera ────────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     setCameraError("");
     try {
-      // Prefer back camera; fall back to any
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -157,7 +147,46 @@ export default function DualZoneScanner({
     setFaceDetected(false);
   }, []);
 
-  // ── Main scan + detection loop (runs on rAF) ──────────────────────────────
+  // ── FIXED: Capture ONLY the face zone, not the full frame ──────────────
+  const captureFaceZone = useCallback((
+    video: HTMLVideoElement,
+    faceZoneX: number,
+    faceZoneY: number,
+    faceZoneW: number,
+    faceZoneH: number,
+    videoW: number,
+    videoH: number,
+  ): string => {
+    // Add some padding around the face zone for context
+    const pad = Math.floor(Math.min(faceZoneW, faceZoneH) * 0.1);
+    const cropX = Math.max(0, faceZoneX - pad);
+    const cropY = Math.max(0, faceZoneY - pad);
+    const cropW = Math.min(faceZoneW + pad * 2, videoW - cropX);
+    const cropH = Math.min(faceZoneH + pad * 2, videoH - cropY);
+
+    // Output size: cap at 480px wide for reasonable file size
+    const maxOut  = 480;
+    const scale   = Math.min(1, maxOut / cropW);
+    const outW    = Math.round(cropW * scale);
+    const outH    = Math.round(cropH * scale);
+
+    const captureCanvas  = document.createElement("canvas");
+    captureCanvas.width  = outW;
+    captureCanvas.height = outH;
+    const ctx = captureCanvas.getContext("2d")!;
+
+    // Draw only the face region from the video
+    ctx.drawImage(
+      video,
+      cropX, cropY, cropW, cropH,   // source rect (from video)
+      0, 0, outW, outH               // dest rect (on canvas)
+    );
+
+    const dataUrl = captureCanvas.toDataURL("image/jpeg", 0.88);
+    console.log(`📸 [DualZone] Face zone captured: ${outW}x${outH}, dataURL length=${dataUrl.length}`);
+    return dataUrl;
+  }, []);
+
   const runLoop = useCallback(() => {
     const video  = videoRef.current;
     const canvas = canvasRef.current;
@@ -170,37 +199,38 @@ export default function DualZoneScanner({
     const VW = video.videoWidth  || 1280;
     const VH = video.videoHeight || 720;
 
-    // Keep worker canvas in sync with video resolution
     if (worker.width !== VW || worker.height !== VH) {
       worker.width  = VW;
       worker.height = VH;
     }
 
-    // Draw current video frame to off-screen worker canvas (no mirroring)
     const wCtx = worker.getContext("2d", { willReadFrequently: true })!;
     wCtx.drawImage(video, 0, 0, VW, VH);
 
     // ── Zone geometry ──────────────────────────────────────────────────────
-    // Face oval: left 44% of frame
     const faceZoneX = Math.floor(VW * 0.03);
     const faceZoneY = Math.floor(VH * 0.07);
     const faceZoneW = Math.floor(VW * 0.40);
     const faceZoneH = Math.floor(VH * 0.80);
 
-    // QR square: right 42% of frame
-    const qrSize    = Math.floor(Math.min(VW * 0.40, VH * 0.70));
-    const qrZoneX   = Math.floor(VW * 0.56);
-    const qrZoneY   = Math.floor((VH - qrSize) / 2);
-    const qrZoneW   = qrSize;
-    const qrZoneH   = qrSize;
+    const qrSize  = Math.floor(Math.min(VW * 0.40, VH * 0.70));
+    const qrZoneX = Math.floor(VW * 0.56);
+    const qrZoneY = Math.floor((VH - qrSize) / 2);
+    const qrZoneW = qrSize;
+    const qrZoneH = qrSize;
 
-    // ── Face detection (left zone) ─────────────────────────────────────────
+    // ── Face detection ─────────────────────────────────────────────────────
     let faceData: ImageData;
-    try { faceData = wCtx.getImageData(0, 0, VW, VH); } catch { loopRef.current = requestAnimationFrame(runLoop); return; }
+    try {
+      faceData = wCtx.getImageData(0, 0, VW, VH);
+    } catch {
+      loopRef.current = requestAnimationFrame(runLoop);
+      return;
+    }
     const { detected, score } = detectFaceInRegion(faceData, faceZoneX, faceZoneY, faceZoneW, faceZoneH, VW);
     setFaceDetected(detected);
 
-    // ── QR detection (right zone only) ────────────────────────────────────
+    // ── QR detection ──────────────────────────────────────────────────────
     if (!processingRef.current && jsQrLoadedRef.current) {
       try {
         const qrImageData = wCtx.getImageData(qrZoneX, qrZoneY, qrZoneW, qrZoneH);
@@ -210,31 +240,38 @@ export default function DualZoneScanner({
           processingRef.current = true;
           setLastQrFlash(Date.now());
 
-          // Capture full frame for the face photo
-          const captureCanvas = document.createElement("canvas");
-          captureCanvas.width  = VW;
-          captureCanvas.height = VH;
-          captureCanvas.getContext("2d")!.drawImage(video, 0, 0, VW, VH);
-          const faceImageData = captureCanvas.toDataURL("image/jpeg", 0.92);
-
-          const qrData = code.data;
+          const qrData  = code.data;
           const hasFace = detected;
 
-          // Call parent after a tick to avoid blocking the frame
+          // ── FIXED: Capture ONLY the face zone ──────────────────────────
+          let faceImageData = "";
+          if (hasFace) {
+            try {
+              faceImageData = captureFaceZone(
+                video,
+                faceZoneX, faceZoneY, faceZoneW, faceZoneH,
+                VW, VH
+              );
+            } catch (err) {
+              console.error("❌ [DualZone] Face capture failed:", err);
+            }
+          }
+
+          console.log(`🔍 [DualZone] QR detected. hasFace=${hasFace}, faceDataLen=${faceImageData.length}`);
+
           setTimeout(() => {
-            if (hasFace) {
+            if (hasFace && faceImageData.length > 100) {
               onScanWithFace(qrData, faceImageData);
             } else {
               onScanNoFace(qrData);
             }
-            // Cooldown before next scan
             setTimeout(() => { processingRef.current = false; }, 3000);
           }, 0);
         }
       } catch { /* ignore QR decode errors */ }
     }
 
-    // ── Draw overlay onto visible canvas ──────────────────────────────────
+    // ── Draw overlay ──────────────────────────────────────────────────────
     if (canvas.width !== VW || canvas.height !== VH) {
       canvas.width  = VW;
       canvas.height = VH;
@@ -242,11 +279,10 @@ export default function DualZoneScanner({
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, VW, VH);
 
-    // Dim everything
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, 0, VW, VH);
 
-    // Face oval — cut out
+    // Face oval cut-out
     const faceCX = faceZoneX + faceZoneW / 2;
     const faceCY = faceZoneY + faceZoneH / 2;
     const faceRX = faceZoneW * 0.47;
@@ -268,7 +304,7 @@ export default function DualZoneScanner({
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Landmark mesh when face detected
+    // Landmark mesh
     if (detected) {
       const pts = LANDMARKS.map(p => ({
         x: faceZoneX + p.x * faceZoneW,
@@ -291,7 +327,7 @@ export default function DualZoneScanner({
       });
     }
 
-    // QR square — cut out
+    // QR square cut-out
     const qrR = qrZoneW * 0.05;
     ctx.save();
     ctx.globalCompositeOperation = "destination-out";
@@ -300,7 +336,7 @@ export default function DualZoneScanner({
     ctx.fill();
     ctx.restore();
 
-    // QR flash highlight after scan
+    // QR flash
     const timeSinceFlash = Date.now() - lastQrFlash;
     if (timeSinceFlash < 400) {
       ctx.save();
@@ -310,23 +346,22 @@ export default function DualZoneScanner({
       ctx.restore();
     }
 
-    // QR border + corner brackets
+    // QR border + corners
     ctx.beginPath(); ctx.roundRect(qrZoneX, qrZoneY, qrZoneW, qrZoneH, qrR);
     ctx.strokeStyle = "rgba(99,102,241,0.80)"; ctx.lineWidth = 2.5;
     ctx.setLineDash([12, 5]); ctx.stroke(); ctx.setLineDash([]);
 
     const bLen = qrZoneW * 0.13;
     ctx.strokeStyle = "rgba(129,140,248,1)"; ctx.lineWidth = 4; ctx.lineCap = "round";
-    [[qrZoneX, qrZoneY, 1, 1],[qrZoneX+qrZoneW, qrZoneY, -1, 1],[qrZoneX, qrZoneY+qrZoneH, 1, -1],[qrZoneX+qrZoneW, qrZoneY+qrZoneH, -1, -1]].forEach(([cx,cy,dx,dy]) => {
+    ([[qrZoneX, qrZoneY, 1, 1],[qrZoneX+qrZoneW, qrZoneY, -1, 1],[qrZoneX, qrZoneY+qrZoneH, 1, -1],[qrZoneX+qrZoneW, qrZoneY+qrZoneH, -1, -1]] as [number,number,number,number][]).forEach(([cx,cy,dx,dy]) => {
       ctx.beginPath(); ctx.moveTo(cx+dx*bLen, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy+dy*bLen); ctx.stroke();
     });
 
-    // ── Labels ─────────────────────────────────────────────────────────────
+    // Labels
     const fs = Math.max(11, Math.floor(VW * 0.018));
     ctx.font = `bold ${fs}px system-ui,-apple-system,sans-serif`;
     ctx.textAlign = "center";
 
-    // Face pill + label
     drawPill(ctx, faceCX, faceZoneY - fs * 0.9, "VISAGE", detected ? "#34d399" : "#94a3b8", fs * 0.82);
     ctx.fillStyle = detected ? "rgba(52,211,153,0.95)" : "rgba(255,255,255,0.75)";
     ctx.fillText(
@@ -334,7 +369,6 @@ export default function DualZoneScanner({
       faceCX, faceZoneY + faceZoneH + fs * 1.7
     );
 
-    // QR pill + label
     drawPill(ctx, qrZoneX + qrZoneW / 2, qrZoneY - fs * 0.9, "CODE QR", "#818cf8", fs * 0.82);
     ctx.fillStyle = "rgba(165,180,252,0.95)";
     ctx.fillText("Tenez votre QR ici →", qrZoneX + qrZoneW / 2, qrZoneY + qrZoneH + fs * 1.7);
@@ -345,7 +379,7 @@ export default function DualZoneScanner({
     ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
 
     loopRef.current = requestAnimationFrame(runLoop);
-  }, [onScanWithFace, onScanNoFace, lastQrFlash]);
+  }, [onScanWithFace, onScanNoFace, lastQrFlash, captureFaceZone]);
 
   function drawPill(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, color: string, fs: number) {
     ctx.font = `bold ${fs}px system-ui,sans-serif`;
@@ -359,7 +393,6 @@ export default function DualZoneScanner({
     ctx.fillText(text, cx, cy); ctx.textBaseline = "alphabetic";
   }
 
-  // ── Start / stop scanning ─────────────────────────────────────────────────
   const startScanning = useCallback(async () => {
     if (!cameraReady) await startCamera();
     setScanning(true);
@@ -374,13 +407,11 @@ export default function DualZoneScanner({
     onStop();
   }, [onStop]);
 
-  // Start camera when active prop becomes true
   useEffect(() => {
     if (active && !cameraReady) startCamera();
     if (!active) { stopScanning(); stopCamera(); }
   }, [active]); // eslint-disable-line
 
-  // When camera becomes ready and active, kick off loop
   useEffect(() => {
     if (cameraReady && scanning) {
       cancelAnimationFrame(loopRef.current);
@@ -392,7 +423,6 @@ export default function DualZoneScanner({
 
   return (
     <div className="card overflow-hidden flex flex-col">
-      {/* Header */}
       <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
         <div>
           <h3 className="font-bold text-slate-900 flex items-center gap-2">
@@ -416,7 +446,6 @@ export default function DualZoneScanner({
         </div>
       </div>
 
-      {/* Camera viewport */}
       <div ref={containerRef} className="relative bg-slate-900 w-full" style={{ aspectRatio: "16/9" }}>
         {cameraError ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
@@ -438,15 +467,9 @@ export default function DualZoneScanner({
           </div>
         ) : (
           <>
-            {/* Live video — NOT mirrored so QR detection coords match */}
             <video ref={videoRef} muted playsInline style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
-
-            {/* Overlay canvas */}
             <canvas ref={canvasRef} style={{ position:"absolute", inset:0, width:"100%", height:"100%", pointerEvents:"none" }} />
-
-            {/* Off-screen worker canvas (hidden) */}
             <canvas ref={workerRef} style={{ display:"none" }} />
-
             {!cameraReady && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
                 <div className="flex flex-col items-center gap-2">
@@ -459,7 +482,6 @@ export default function DualZoneScanner({
         )}
       </div>
 
-      {/* Zone instruction strip */}
       {active && cameraReady && (
         <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
           <div className={`flex items-center gap-2 px-4 py-3 transition-colors ${faceDetected ? "bg-emerald-50" : "bg-slate-50"}`}>
@@ -487,7 +509,6 @@ export default function DualZoneScanner({
         </div>
       )}
 
-      {/* Start / Stop */}
       <div className="p-4 border-t border-slate-100">
         {!scanning ? (
           <button onClick={startScanning} disabled={!!cameraError}

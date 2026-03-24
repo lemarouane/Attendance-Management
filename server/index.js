@@ -222,11 +222,11 @@ app.get("/api/validate-apogee/:code", async (req, res) => {
     return res.json({
       valid: true,
       student: {
-        COD_IND:          String(cod_ind),
-        LIB_NOM_PAT_IND:  student.LIB_NOM_PAT_IND || "",
-        LIB_PR1_IND:      student.LIB_PR1_IND || "",
-        CIN_IND:          student.CIN_IND || "",
-        COD_ETP:           cod_etp,
+        COD_IND:         String(cod_ind),
+        LIB_NOM_PAT_IND: student.LIB_NOM_PAT_IND || "",
+        LIB_PR1_IND:     student.LIB_PR1_IND || "",
+        CIN_IND:         student.CIN_IND || "",
+        COD_ETP:         cod_etp,
       },
     });
   } catch (err) {
@@ -254,7 +254,7 @@ app.get("/api/salles", async (_req, res) => {
     );
 
     const salles = rows.map((r) => ({
-      id: r.salle_name.replace(/\s+/g, "_").toLowerCase(),
+      id:         r.salle_name.replace(/\s+/g, "_").toLowerCase(),
       salle_name: r.salle_name,
       salle_type: r.salle_type || "",
     }));
@@ -271,16 +271,34 @@ app.get("/api/salles", async (_req, res) => {
 });
 
 // ─── ROUTE: Upload base64 image ───────────────────────────────────────────────
+//
+// Handles three types:
+//   cin      → uploads/students/<apogee>/cin.png
+//   selfie   → uploads/students/<apogee>/selfie.png
+//   scan_face→ uploads/students/<apogee>/scan_faces/<clientFilename || timestamp>.jpg
+//
 app.post("/api/upload-base64/:apogee/:type", (req, res) => {
-  const { apogee, type } = req.params;
-  const { imageData }    = req.body;
+  const { apogee, type }                   = req.params;
+  const { imageData, filename: clientFilename } = req.body;
 
-  if (!["cin", "selfie"].includes(type)) {
-    return res.status(400).json({ success: false, message: "Type must be 'cin' or 'selfie'." });
+
+
+
+
+
+
+  
+  console.log(`📸 [upload request] type=${type}, apogee=${apogee}, dataLength=${imageData?.length || 0}, filename=${clientFilename || 'none'}`);
+
+  const ALLOWED_TYPES = ["cin", "selfie", "scan_face"];
+  if (!ALLOWED_TYPES.includes(type)) {
+    return res.status(400).json({ success: false, message: `Unknown type: ${type}.` });
   }
   if (!imageData || imageData.length < 100) {
+    console.error(`❌ [upload] Rejected: imageData too short (${imageData?.length || 0} chars)`);
     return res.status(400).json({ success: false, message: "No valid imageData provided." });
   }
+
 
   try {
     const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
@@ -290,22 +308,36 @@ app.post("/api/upload-base64/:apogee/:type", (req, res) => {
       return res.status(400).json({ success: false, message: "Image buffer is too small." });
     }
 
-    const studentDir = path.join(uploadsDir, "students", String(apogee));
-    fs.mkdirSync(studentDir, { recursive: true });
+    let absolutePath;
+    let relativePath;
 
-    const fileName = `${type}.png`;
-    const filePath = path.join(studentDir, fileName);
-    fs.writeFileSync(filePath, buffer);
+    if (type === "scan_face") {
+      // ── Scan-face: store in student's dedicated scan_faces/ subfolder ──────
+      // Use the rich filename sent by the client:
+      //   e.g. 2025-03-24_seance3_SALLE-A3_1711234567890.jpg
+      // Falls back to a bare timestamp if client didn't send one.
+      const fname  = clientFilename || `${Date.now()}.jpg`;
+      const folder = path.join(uploadsDir, "students", String(apogee), "scan_faces");
+      fs.mkdirSync(folder, { recursive: true });
+      absolutePath = path.join(folder, fname);
+      relativePath = `/uploads/students/${apogee}/scan_faces/${fname}`;
+    } else {
+      // ── cin / selfie: stored directly in student folder ───────────────────
+      const folder = path.join(uploadsDir, "students", String(apogee));
+      fs.mkdirSync(folder, { recursive: true });
+      const fname  = `${type}.png`;
+      absolutePath = path.join(folder, fname);
+      relativePath = `/uploads/students/${apogee}/${fname}`;
+    }
 
-    const urlPath  = `/uploads/students/${apogee}/${fileName}`;
-    const fileSize = buffer.length;
+    fs.writeFileSync(absolutePath, buffer);
 
-    console.log(`📸 Saved ${type} for apogee=${apogee} → ${filePath} (${fileSize} bytes)`);
+    console.log(`📸 [upload] ${type} for apogee=${apogee} → ${relativePath} (${buffer.length} bytes)`);
 
     return res.json({
       success: true,
-      path: urlPath,
-      size: fileSize,
+      path:    relativePath,
+      size:    buffer.length,
       message: `${type} image saved successfully.`,
     });
   } catch (err) {
@@ -319,15 +351,25 @@ app.post("/api/upload-base64/:apogee/:type", (req, res) => {
 
 // ─── ROUTE: Check if student images exist ─────────────────────────────────────
 app.get("/api/student-images/:apogee", (req, res) => {
-  const { apogee } = req.params;
-  const studentDir = path.join(uploadsDir, "students", String(apogee));
+  const { apogee }  = req.params;
+  const studentDir  = path.join(uploadsDir, "students", String(apogee));
+  const cinPath     = path.join(studentDir, "cin.png");
+  const selfiePath  = path.join(studentDir, "selfie.png");
+  const scanFaceDir = path.join(studentDir, "scan_faces");
 
-  const cinPath    = path.join(studentDir, "cin.png");
-  const selfiePath = path.join(studentDir, "selfie.png");
+  // List existing scan_face files if folder exists
+  let scanFaces = [];
+  if (fs.existsSync(scanFaceDir)) {
+    scanFaces = fs.readdirSync(scanFaceDir).map((f) => ({
+      filename: f,
+      url:      `/uploads/students/${apogee}/scan_faces/${f}`,
+    }));
+  }
 
   res.json({
     cin:    { exists: fs.existsSync(cinPath),    url: `/uploads/students/${apogee}/cin.png` },
     selfie: { exists: fs.existsSync(selfiePath), url: `/uploads/students/${apogee}/selfie.png` },
+    scanFaces,
   });
 });
 
@@ -351,7 +393,6 @@ app.post("/api/prof/login", async (req, res) => {
   }
 
   try {
-    // Find prof by identifiant (PPR code)
     const [rows] = await poolEdt.query(
       `SELECT codeProf, nom, prenom, identifiant, email, specialite
        FROM ressources_profs
@@ -367,9 +408,6 @@ app.post("/api/prof/login", async (req, res) => {
       });
     }
 
-    // Password check: must match the password sent (frontend will use the admin password)
-    // Since we use Firebase admin password on frontend, we just validate the prof exists
-    // The actual Firebase auth happens on the frontend side
     const prof = rows[0];
 
     console.log(`✅ Prof login: ${prof.nom} ${prof.prenom} (PPR: ${identifiant}, codeProf: ${prof.codeProf})`);
@@ -396,8 +434,8 @@ app.post("/api/prof/login", async (req, res) => {
 
 // ─── ROUTE: Prof Timetable (week view) ────────────────────────────────────────
 app.get("/api/prof/:codeProf/timetable", async (req, res) => {
-  const { codeProf } = req.params;
-  const { week, year } = req.query;
+  const { codeProf }    = req.params;
+  const { week, year }  = req.query;
 
   if (!edtConnected || !poolEdt) {
     return res.status(503).json({
@@ -408,13 +446,11 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
   }
 
   try {
-    // Calculate Monday of the requested week
     const currentYear = parseInt(year) || new Date().getFullYear();
     const currentWeek = parseInt(week) || getISOWeek(new Date());
 
-    // Get Monday date from ISO week
     const monday = getMondayOfWeek(currentYear, currentWeek);
-    const days = [];
+    const days   = [];
     for (let d = 0; d < 6; d++) {
       const date = new Date(monday);
       date.setDate(date.getDate() + d);
@@ -426,7 +462,6 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
 
     console.log(`📅 Timetable for codeProf=${codeProf}, week=${currentWeek}, year=${currentYear}, ${startDate} → ${endDate}`);
 
-    // Main query: get all sessions for this prof in this date range
     const [sessions] = await poolEdt.query(
       `SELECT 
          s.codeSeance,
@@ -455,11 +490,9 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
       [codeProf, startDate, endDate]
     );
 
-    // For each session, get salles and groupes
     const enrichedSessions = [];
 
     for (const session of sessions) {
-      // Get salles
       const [salles] = await poolEdt.query(
         `SELECT rs.codeSalle, rs.nom AS salle_nom, rs.alias AS salle_alias
          FROM seances_salles ss
@@ -469,7 +502,6 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
         [session.codeSeance]
       );
 
-      // Get groupes
       const [groupes] = await poolEdt.query(
         `SELECT rg.codeGroupe, rg.nom AS groupe_nom, rg.alias AS groupe_alias
          FROM seances_groupes sg
@@ -479,7 +511,6 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
         [session.codeSeance]
       );
 
-      // Get type activite label
       let typeLabel = "";
       if (session.codeTypeActivite) {
         const [types] = await poolEdt.query(
@@ -496,11 +527,10 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
       const startTime = `${startHour.padStart(2, "0")}:${startMin}`;
 
       // Parse duration: dureeSeance=130 → 1h30
-      const dureeStr  = String(session.dureeSeance).padStart(4, "0");
-      const durHour   = parseInt(dureeStr.substring(0, dureeStr.length - 2)) || 0;
-      const durMin    = parseInt(dureeStr.substring(dureeStr.length - 2)) || 0;
+      const dureeStr = String(session.dureeSeance).padStart(4, "0");
+      const durHour  = parseInt(dureeStr.substring(0, dureeStr.length - 2)) || 0;
+      const durMin   = parseInt(dureeStr.substring(dureeStr.length - 2)) || 0;
 
-      // Calculate end time
       const totalStartMin = parseInt(startHour) * 60 + parseInt(startMin);
       const totalEndMin   = totalStartMin + durHour * 60 + durMin;
       const endHour       = Math.floor(totalEndMin / 60);
@@ -509,35 +539,35 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
 
       // Parse enseignement name — extract between first two underscores
       let displayName = session.matiere_nom || "";
-      const parts = (session.enseignement_nom || "").split("_");
+      const parts     = (session.enseignement_nom || "").split("_");
       if (parts.length >= 2) {
         displayName = parts[1] || parts[0];
       }
 
       enrichedSessions.push({
-        codeSeance:     session.codeSeance,
-        date:           session.dateSeance instanceof Date
-                          ? session.dateSeance.toISOString().split("T")[0]
-                          : String(session.dateSeance),
+        codeSeance:        session.codeSeance,
+        date:              session.dateSeance instanceof Date
+                             ? session.dateSeance.toISOString().split("T")[0]
+                             : String(session.dateSeance),
         startTime,
         endTime,
-        duration:       `${durHour}h${String(durMin).padStart(2, "0")}`,
-        durationMinutes: durHour * 60 + durMin,
-        matiere:        session.matiere_nom || "",
-        matiereAlias:   session.matiere_alias || "",
-        enseignement:   session.enseignement_nom || "",
+        duration:          `${durHour}h${String(durMin).padStart(2, "0")}`,
+        durationMinutes:   durHour * 60 + durMin,
+        matiere:           session.matiere_nom || "",
+        matiereAlias:      session.matiere_alias || "",
+        enseignement:      session.enseignement_nom || "",
         enseignementAlias: session.enseignement_alias || "",
         displayName,
-        typeActivite:   typeLabel,
-        codeTypeActivite: session.codeTypeActivite,
-        commentaire:    session.commentaire || "",
-        couleur:        session.matiere_couleur || 16777215,
-        salles:         salles.map(s => ({
+        typeActivite:      typeLabel,
+        codeTypeActivite:  session.codeTypeActivite,
+        commentaire:       session.commentaire || "",
+        couleur:           session.matiere_couleur || 16777215,
+        salles:            salles.map(s => ({
           codeSalle: s.codeSalle,
           nom:       s.salle_nom,
           alias:     s.salle_alias || s.salle_nom,
         })),
-        groupes:        groupes.map(g => ({
+        groupes:           groupes.map(g => ({
           codeGroupe: g.codeGroupe,
           nom:        g.groupe_nom,
           alias:      g.groupe_alias || g.groupe_nom,
@@ -546,18 +576,18 @@ app.get("/api/prof/:codeProf/timetable", async (req, res) => {
     }
 
     return res.json({
-      success: true,
-      week: currentWeek,
-      year: currentYear,
-      monday: startDate,
+      success:  true,
+      week:     currentWeek,
+      year:     currentYear,
+      monday:   startDate,
       saturday: endDate,
       sessions: enrichedSessions,
     });
   } catch (err) {
     console.error("Timetable query error:", err.message);
     return res.status(500).json({
-      success: false,
-      message: "Failed to load timetable: " + err.message,
+      success:  false,
+      message:  "Failed to load timetable: " + err.message,
       sessions: [],
     });
   }
@@ -588,7 +618,7 @@ app.get("/api/prof/:codeProf/matieres", async (req, res) => {
     );
 
     return res.json({
-      success: true,
+      success:  true,
       matieres: rows.map(r => ({
         codeMatiere: r.codeMatiere,
         nom:         r.nom,
@@ -604,7 +634,7 @@ app.get("/api/prof/:codeProf/matieres", async (req, res) => {
 
 // ─── Helper: ISO week number ──────────────────────────────────────────────────
 function getISOWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const d      = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -613,9 +643,9 @@ function getISOWeek(date) {
 
 // ─── Helper: Monday of ISO week ───────────────────────────────────────────────
 function getMondayOfWeek(year, week) {
-  const jan4 = new Date(year, 0, 4);
+  const jan4      = new Date(year, 0, 4);
   const dayOfWeek = jan4.getDay() || 7;
-  const monday = new Date(jan4);
+  const monday    = new Date(jan4);
   monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
   return monday;
 }

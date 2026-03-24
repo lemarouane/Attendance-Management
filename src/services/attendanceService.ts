@@ -65,7 +65,6 @@ export async function getSalles(): Promise<Salle[]> {
         salle_type: s.salle_type,
       }));
     }
-    // Fallback if MySQL is offline
     return [
       { id: "amphi_2", salle_name: "Amphi 2",  salle_type: "Cours" },
       { id: "amphi_3", salle_name: "Amphi 3",  salle_type: "Cours" },
@@ -84,23 +83,20 @@ export async function getSalles(): Promise<Salle[]> {
 }
 
 // ─── Archive a live record into attendance_archive ────────────────────────────
-async function archiveRecord(data: Record<string, unknown>): Promise<void> {
-  try {
-    const scanMs = tsToMs(data.scan_time);
-    const scanDate = scanMs ? new Date(scanMs) : new Date();
+async function archiveRecord(data: Record<string, unknown>): Promise<string> {
+  const scanMs = tsToMs(data.scan_time);
+  const scanDate = scanMs ? new Date(scanMs) : new Date();
 
-    await addDoc(collection(db, "attendance_archive"), {
-      ...data,
-      archived_at: serverTimestamp(),
-      date_label: scanDate.toLocaleDateString("fr-MA", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }),
-    });
-  } catch (err) {
-    console.error("Archive write failed:", err);
-  }
+  const archiveRef = await addDoc(collection(db, "attendance_archive"), {
+    ...data,
+    archived_at: serverTimestamp(),
+    date_label: scanDate.toLocaleDateString("fr-MA", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }),
+  });
+  return archiveRef.id;
 }
 
 // ─── Auto-cleanup: delete live attendance records older than 2 hours ──────────
@@ -126,17 +122,21 @@ export async function cleanupOldAttendance(): Promise<number> {
 }
 
 // ─── Process QR scan and record attendance ────────────────────────────────────
-// scanFacePath: optional — the path returned after uploading the face photo
-//               taken at scan time.  Pass "" or undefined if not yet uploaded.
+// Returns liveDocId so the caller can patch scan_face_path after async upload.
 export async function processQRScan(
   rawData: string,
   sessionId: string,
   salleId: string,
   salleName: string,
   scanFacePath?: string,
-): Promise<{ success: boolean; student: StudentProfile | null; message: string }> {
+): Promise<{
+  success: boolean;
+  student: StudentProfile | null;
+  message: string;
+  liveDocId?: string;      // ← NEW: Firestore doc id for post-upload patch
+  archiveDocId?: string;   // ← NEW: archive doc id for post-upload patch
+}> {
 
-  // Run cleanup silently in background every scan
   cleanupOldAttendance().catch(console.error);
 
   let payload: QRPayload;
@@ -162,7 +162,6 @@ export async function processQRScan(
 
   // ── Duplicate check ────────────────────────────────────────────────────────
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
   const dupQuery = query(
     collection(db, "attendance"),
     where("student_id", "==", payload.uid),
@@ -197,35 +196,46 @@ export async function processQRScan(
     salle_name:     salleName,
     student_name:   `${student.first_name} ${student.last_name}`,
     apogee_code:    student.apogee_code  ?? "",
-    filiere:        student.filiere       ?? student.cod_etp ?? "",
-    cod_etp:        student.cod_etp       ?? "",
-    // Profile selfie (stored at registration)
-    selfie_path:    student.selfie_path   ?? student.photo_url ?? "",
-    // Face captured live at scan time — proves who was holding the QR code
+    filiere:        student.filiere      ?? student.cod_etp ?? "",
+    cod_etp:        student.cod_etp      ?? "",
+    selfie_path:    student.selfie_path  ?? student.photo_url ?? "",
     scan_face_path: scanFacePath ?? "",
   };
 
-  // ── Write to live attendance ───────────────────────────────────────────────
+  // ── Write live record ──────────────────────────────────────────────────────
   const liveRef = await addDoc(collection(db, "attendance"), record);
 
-  // ── Immediately mirror to archive (permanent) ─────────────────────────────
-  await archiveRecord({ ...record, live_id: liveRef.id });
+  // ── Mirror to archive immediately ─────────────────────────────────────────
+  const archiveId = await archiveRecord({ ...record, live_id: liveRef.id });
 
-  return { success: true, student, message: "Attendance recorded successfully!" };
+  return {
+    success:      true,
+    student,
+    message:      "Attendance recorded successfully!",
+    liveDocId:    liveRef.id,    // ← caller will use this to patch scan_face_path
+    archiveDocId: archiveId,     // ← caller will use this to patch archive too
+  };
 }
 
-// ─── Update scan_face_path on an existing attendance record ──────────────────
-// Called after the face photo upload completes (async after QR scan).
-// We update BOTH the live record (by live_id) and the archive copy.
+// ─── Patch scan_face_path after async face upload ─────────────────────────────
+// Call this after uploadScanFace() resolves successfully.
+// Updates BOTH the live record and the archive copy.
 export async function updateScanFacePath(
   liveDocId: string,
+  archiveDocId: string,
   facePath: string
 ): Promise<void> {
   try {
     const { updateDoc } = await import("firebase/firestore");
-    await updateDoc(doc(db, "attendance", liveDocId), { scan_face_path: facePath });
+
+    await Promise.all([
+      updateDoc(doc(db, "attendance", liveDocId), { scan_face_path: facePath }),
+      updateDoc(doc(db, "attendance_archive", archiveDocId), { scan_face_path: facePath }),
+    ]);
+
+    console.log(`✅ scan_face_path patched on live(${liveDocId}) + archive(${archiveDocId})`);
   } catch (err) {
-    console.error("Failed to update scan_face_path on live record:", err);
+    console.error("Failed to patch scan_face_path:", err);
   }
 }
 

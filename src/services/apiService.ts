@@ -186,15 +186,30 @@ export async function uploadBase64Image(
 }
 
 // ─── Upload scan-time face photo ──────────────────────────────────────────────
-// Stores in /uploads/students/{apogee}/scan_faces/{timestamp}.jpg
-// Returns the relative path to store in Firestore (scan_face_path).
+// Stores in /uploads/students/{apogee}/scan_faces/{date}_{seance}_{salle}_{ts}.jpg
+// The filename encodes the full session context so each student's folder is self-documenting.
+export interface ScanFaceMeta {
+  date?: string;    // "YYYY-MM-DD"
+  seance?: string;  // seance number / id
+  salle?: string;   // room name, e.g. "SALLE A3"
+}
+
 export async function uploadScanFace(
   apogee: string,
-  imageData: string
+  imageData: string,
+  meta?: ScanFaceMeta
 ): Promise<{ success: boolean; path: string; message?: string }> {
   if (!imageData || imageData.length < 100) {
     return { success: false, path: "", message: "No image data." };
   }
+
+  // Build a rich, human-readable filename:
+  //   2025-03-24_seance3_SALLE-A3_1711234567890.jpg
+  const date    = meta?.date   || new Date().toISOString().slice(0, 10);
+  const seance  = meta?.seance ? `_seance${meta.seance}` : "";
+  const salle   = meta?.salle  ? `_${meta.salle.replace(/\s+/g, "-")}` : "";
+  const ts      = Date.now();
+  const filename = `${date}${seance}${salle}_${ts}.jpg`;
 
   try {
     const resp = await fetchWithTimeout(
@@ -202,7 +217,8 @@ export async function uploadScanFace(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageData }),
+        // Pass filename so the backend saves it with the rich name instead of generating one
+        body: JSON.stringify({ imageData, filename }),
       },
       15000
     );
