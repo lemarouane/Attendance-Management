@@ -49,13 +49,13 @@ function getSessionStatus(session: EdtSession, todayStr: string, nowMinutes: num
   const endMinutes = end.hours * 60 + end.minutes;
   const scanAllowedFrom = startMinutes - 15;
 
-if (nowMinutes >= endMinutes) {
-  return {
-    canScan: true,
-    status: "past",
-    message: "Séance terminée (scan toujours possible)"
-  };
-}
+  if (nowMinutes >= endMinutes) {
+    
+    
+
+    return { canScan: false, status: "past", message: "Séance terminée" };
+
+  }
 
   if (nowMinutes >= scanAllowedFrom && nowMinutes < endMinutes) {
     return { canScan: true, status: nowMinutes >= startMinutes ? "active" : "ready", message: "Scanner disponible" };

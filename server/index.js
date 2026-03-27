@@ -643,11 +643,16 @@ function getISOWeek(date) {
 
 // ─── Helper: Monday of ISO week ───────────────────────────────────────────────
 function getMondayOfWeek(year, week) {
-  const jan4      = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7;
-  const monday    = new Date(jan4);
-  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
-  return monday;
+  // Find Jan 4th (always in week 1 by ISO standard)
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  // Day of week: Mon=1 ... Sun=7
+  const dayOfWeek = jan4.getUTCDay() || 7;
+  // Monday of week 1
+  const mondayWeek1 = new Date(jan4);
+  mondayWeek1.setUTCDate(jan4.getUTCDate() - (dayOfWeek - 1));
+  // Monday of requested week
+  mondayWeek1.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
+  return mondayWeek1;
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────

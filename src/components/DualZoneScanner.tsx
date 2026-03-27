@@ -83,6 +83,23 @@ const CONNECTIONS = [
   [9,0],[3,10],[9,11],[10,12],[11,5],[12,7],[5,8],[7,8],
 ];
 
+// Helper: draw text that is readable even when the video underneath is CSS-mirrored.
+// We flip the context locally around the text anchor point.
+function drawMirroredText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  align: CanvasTextAlign = "center"
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(-1, 1);
+  ctx.textAlign = align;
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
 export default function DualZoneScanner({
   onScanWithFace, onScanNoFace,
   active, onStart, onStop, salleeName,
@@ -147,7 +164,6 @@ export default function DualZoneScanner({
     setFaceDetected(false);
   }, []);
 
-  // ── FIXED: Capture ONLY the face zone, not the full frame ──────────────
   const captureFaceZone = useCallback((
     video: HTMLVideoElement,
     faceZoneX: number,
@@ -157,14 +173,12 @@ export default function DualZoneScanner({
     videoW: number,
     videoH: number,
   ): string => {
-    // Add some padding around the face zone for context
     const pad = Math.floor(Math.min(faceZoneW, faceZoneH) * 0.1);
     const cropX = Math.max(0, faceZoneX - pad);
     const cropY = Math.max(0, faceZoneY - pad);
     const cropW = Math.min(faceZoneW + pad * 2, videoW - cropX);
     const cropH = Math.min(faceZoneH + pad * 2, videoH - cropY);
 
-    // Output size: cap at 480px wide for reasonable file size
     const maxOut  = 480;
     const scale   = Math.min(1, maxOut / cropW);
     const outW    = Math.round(cropW * scale);
@@ -175,11 +189,10 @@ export default function DualZoneScanner({
     captureCanvas.height = outH;
     const ctx = captureCanvas.getContext("2d")!;
 
-    // Draw only the face region from the video
     ctx.drawImage(
       video,
-      cropX, cropY, cropW, cropH,   // source rect (from video)
-      0, 0, outW, outH               // dest rect (on canvas)
+      cropX, cropY, cropW, cropH,
+      0, 0, outW, outH
     );
 
     const dataUrl = captureCanvas.toDataURL("image/jpeg", 0.88);
@@ -208,6 +221,12 @@ export default function DualZoneScanner({
     wCtx.drawImage(video, 0, 0, VW, VH);
 
     // ── Zone geometry ──────────────────────────────────────────────────────
+    // The video is CSS-mirrored (scaleX(-1)), so what appears on the LEFT of
+    // the screen is actually the RIGHT side of the raw video frame.
+    // We keep the raw-frame coordinates for detection, and the canvas overlay
+    // is drawn in raw-frame space too (no CSS transform on the canvas).
+    // Text is drawn with a local flip so it reads correctly over the mirrored video.
+
     const faceZoneX = Math.floor(VW * 0.03);
     const faceZoneY = Math.floor(VH * 0.07);
     const faceZoneW = Math.floor(VW * 0.40);
@@ -243,7 +262,6 @@ export default function DualZoneScanner({
           const qrData  = code.data;
           const hasFace = detected;
 
-          // ── FIXED: Capture ONLY the face zone ──────────────────────────
           let faceImageData = "";
           if (hasFace) {
             try {
@@ -279,10 +297,14 @@ export default function DualZoneScanner({
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, VW, VH);
 
+    // The canvas has NO css transform — it sits in raw-frame space.
+    // The video underneath has scaleX(-1), so the canvas overlay aligns
+    // correctly with shapes/zones. Only text needs a local flip.
+
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, 0, VW, VH);
 
-    // Face oval cut-out
+    // ── Face oval cut-out ─────────────────────────────────────────────────
     const faceCX = faceZoneX + faceZoneW / 2;
     const faceCY = faceZoneY + faceZoneH / 2;
     const faceRX = faceZoneW * 0.47;
@@ -327,7 +349,7 @@ export default function DualZoneScanner({
       });
     }
 
-    // QR square cut-out
+    // ── QR square cut-out ─────────────────────────────────────────────────
     const qrR = qrZoneW * 0.05;
     ctx.save();
     ctx.globalCompositeOperation = "destination-out";
@@ -357,21 +379,33 @@ export default function DualZoneScanner({
       ctx.beginPath(); ctx.moveTo(cx+dx*bLen, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy+dy*bLen); ctx.stroke();
     });
 
-    // Labels
+    // ── Labels (all text uses local flip so it reads correctly) ───────────
     const fs = Math.max(11, Math.floor(VW * 0.018));
-    ctx.font = `bold ${fs}px system-ui,-apple-system,sans-serif`;
-    ctx.textAlign = "center";
 
+    // VISAGE pill
     drawPill(ctx, faceCX, faceZoneY - fs * 0.9, "VISAGE", detected ? "#34d399" : "#94a3b8", fs * 0.82);
+
+    // VISAGE status text below oval
+    ctx.font = `bold ${fs}px system-ui,-apple-system,sans-serif`;
     ctx.fillStyle = detected ? "rgba(52,211,153,0.95)" : "rgba(255,255,255,0.75)";
-    ctx.fillText(
-      detected ? `✓ Visage détecté  ${Math.round(score * 99)}%` : "← Positionnez votre visage",
-      faceCX, faceZoneY + faceZoneH + fs * 1.7
+    drawMirroredText(
+      ctx,
+      detected ? `✓ Visage détecté  ${Math.round(score * 99)}%` : "Positionnez votre visage →",
+      faceCX,
+      faceZoneY + faceZoneH + fs * 1.7
     );
 
+    // CODE QR pill
     drawPill(ctx, qrZoneX + qrZoneW / 2, qrZoneY - fs * 0.9, "CODE QR", "#818cf8", fs * 0.82);
+
+    // QR hint text below box
     ctx.fillStyle = "rgba(165,180,252,0.95)";
-    ctx.fillText("Tenez votre QR ici →", qrZoneX + qrZoneW / 2, qrZoneY + qrZoneH + fs * 1.7);
+    drawMirroredText(
+      ctx,
+      "← Tenez votre QR ici",
+      qrZoneX + qrZoneW / 2,
+      qrZoneY + qrZoneH + fs * 1.7
+    );
 
     // Divider
     ctx.beginPath(); ctx.moveTo(VW * 0.5, VH * 0.04); ctx.lineTo(VW * 0.5, VH * 0.96);
@@ -381,16 +415,24 @@ export default function DualZoneScanner({
     loopRef.current = requestAnimationFrame(runLoop);
   }, [onScanWithFace, onScanNoFace, lastQrFlash, captureFaceZone]);
 
+  // drawPill: pill background drawn normally (no flip needed for shapes),
+  // text inside the pill is locally flipped so it reads correctly.
   function drawPill(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, color: string, fs: number) {
     ctx.font = `bold ${fs}px system-ui,sans-serif`;
     const tw = ctx.measureText(text).width;
     const pw = tw + fs * 1.8; const ph = fs * 1.6; const pr = ph / 2;
+
+    // Pill background + border — no flip needed, shapes are symmetric
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.beginPath(); ctx.roundRect(cx-pw/2, cy-ph/2, pw, ph, pr); ctx.fill();
     ctx.strokeStyle = color + "99"; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.roundRect(cx-pw/2, cy-ph/2, pw, ph, pr); ctx.stroke();
-    ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(text, cx, cy); ctx.textBaseline = "alphabetic";
+
+    // Text — locally flipped so it reads correctly over the mirrored video
+    ctx.fillStyle = color;
+    ctx.textBaseline = "middle";
+    drawMirroredText(ctx, text, cx, cy, "center");
+    ctx.textBaseline = "alphabetic";
   }
 
   const startScanning = useCallback(async () => {
@@ -467,8 +509,29 @@ export default function DualZoneScanner({
           </div>
         ) : (
           <>
-            <video ref={videoRef} muted playsInline style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
-            <canvas ref={canvasRef} style={{ position:"absolute", inset:0, width:"100%", height:"100%", pointerEvents:"none" }} />
+            {/* Video is CSS-mirrored so movement feels natural (like a mirror).
+                The canvas overlay has NO transform — it draws in raw-frame space.
+                Text inside the canvas is locally flipped to stay readable. */}
+            <video
+              ref={videoRef}
+              muted
+              playsInline
+              style={{
+                position: "absolute", inset: 0,
+                width: "100%", height: "100%",
+                objectFit: "cover", display: "block",
+                transform: "scaleX(-1)",
+              }}
+            />
+            <canvas
+              ref={canvasRef}
+              style={{
+                position: "absolute", inset: 0,
+                width: "100%", height: "100%",
+                pointerEvents: "none",
+                // No transform — overlay stays in raw-frame coordinate space
+              }}
+            />
             <canvas ref={workerRef} style={{ display:"none" }} />
             {!cameraReady && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
