@@ -2,9 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
-import LoginPage from "./pages/LoginPage";
-import AdminLoginPage from "./pages/AdminLoginPage";
-import ProfLoginPage from "./pages/ProfLoginPage";
+import UnifiedLoginPage from "./pages/UnifiedLoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import AdminScanPage from "./pages/AdminScanPage";
@@ -35,23 +33,46 @@ export default function App() {
           }}
         />
         <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/admin-login" element={<AdminLoginPage />} />
-          <Route path="/prof-login" element={<ProfLoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+          {/* ── Public ────────────────────────────────────────────────────── */}
+          <Route path="/"            element={<Navigate to="/login" replace />} />
+          <Route path="/login"       element={<UnifiedLoginPage />} />
+          <Route path="/register"    element={<RegisterPage />} />
 
-          <Route path="/dashboard" element={<ProtectedRoute requiredRole="student"><DashboardPage /></ProtectedRoute>} />
+          {/* Old login routes → redirect to unified login */}
+          <Route path="/admin-login" element={<Navigate to="/login" replace />} />
+          <Route path="/prof-login"  element={<Navigate to="/login" replace />} />
 
-          <Route path="/admin-scan" element={<ProtectedRoute requiredRole="admin"><AdminScanPage /></ProtectedRoute>} />
-          <Route path="/admin/attendance" element={<ProtectedRoute requiredRole="admin"><AdminAttendancePage /></ProtectedRoute>} />
-          <Route path="/admin/students" element={<ProtectedRoute requiredRole="admin"><AdminStudentsPage /></ProtectedRoute>} />
-          <Route path="/admin/archive" element={<ProtectedRoute requiredRole="admin"><AdminArchivePage /></ProtectedRoute>} />
-          <Route path="/admin/students/pending" element={<ProtectedRoute requiredRole="admin"><AdminPendingPage /></ProtectedRoute>} />
+          {/* ── Student ───────────────────────────────────────────────────── */}
+          <Route path="/dashboard" element={
+            <ProtectedRoute requiredRole="student"><DashboardPage /></ProtectedRoute>
+          } />
 
-          <Route path="/prof/timetable" element={<ProtectedRoute requiredRole="prof"><ProfTimetablePage /></ProtectedRoute>} />
-          <Route path="/prof/scan" element={<ProtectedRoute requiredRole="prof"><ProfScanPage /></ProtectedRoute>} />
+          {/* ── Admin ─────────────────────────────────────────────────────── */}
+          <Route path="/admin-scan" element={
+            <ProtectedRoute requiredRole="admin"><AdminScanPage /></ProtectedRoute>
+          } />
+          <Route path="/admin/attendance" element={
+            <ProtectedRoute requiredRole="admin"><AdminAttendancePage /></ProtectedRoute>
+          } />
+          <Route path="/admin/students" element={
+            <ProtectedRoute requiredRole="admin"><AdminStudentsPage /></ProtectedRoute>
+          } />
+          <Route path="/admin/archive" element={
+            <ProtectedRoute requiredRole="admin"><AdminArchivePage /></ProtectedRoute>
+          } />
+          <Route path="/admin/students/pending" element={
+            <ProtectedRoute requiredRole="admin"><AdminPendingPage /></ProtectedRoute>
+          } />
 
+          {/* ── Prof ──────────────────────────────────────────────────────── */}
+          <Route path="/prof/timetable" element={
+            <ProtectedRoute requiredRole="prof"><ProfTimetablePage /></ProtectedRoute>
+          } />
+          <Route path="/prof/scan" element={
+            <ProtectedRoute requiredRole="prof"><ProfScanPage /></ProtectedRoute>
+          } />
+
+          {/* ── Fallback ──────────────────────────────────────────────────── */}
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>
